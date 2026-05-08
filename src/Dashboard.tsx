@@ -35,13 +35,18 @@ import {
   ArrowUpLeft,
   CircleDot,
   Check,
-  Menu
+  Menu,
+  Camera,
+  XCircle,
+  ThumbsDown,
+  Users
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts';
 
 import AnalyticsView from './AnalyticsView';
 import FleetView from './FleetView';
 import SettingsView from './SettingsView';
+import TrackingView from './TrackingView';
 
 
 const getTurnIcon = (modifier: string) => {
@@ -146,6 +151,9 @@ export default function Dashboard() {
   
   const [navigationSteps, setNavigationSteps] = useState<any[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('');
+  const [isDispatching, setIsDispatching] = useState(false);
 
   const [aiBriefing, setAiBriefing] = useState<string>("Analyzing current network data...");
   const [fetchingAi, setFetchingAi] = useState(false);
@@ -183,6 +191,26 @@ export default function Dashboard() {
     }
   };
 
+  const markReportFake = async (reportId: string, binId: string) => {
+    try {
+      await fetch(`/api/reports/${reportId}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isFake: true })
+      });
+      fetchBins();
+      if (selectedBin && selectedBin.id === binId) {
+        setSelectedBin({
+          ...selectedBin,
+          hasReport: false,
+          reportDetails: null
+        });
+      }
+    } catch (e) {
+      console.error("Failed to flag report", e);
+    }
+  };
+
   const toggleManualPriority = async (binId: string, currentStatus: boolean) => {
     try {
       await fetch(`/api/bins/${binId}/priority`, {
@@ -203,13 +231,37 @@ export default function Dashboard() {
     }
   };
 
+  const handleDispatch = async () => {
+    if (!selectedDriverId) return;
+    setIsDispatching(true);
+    try {
+      const res = await fetch('/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId: selectedDriverId,
+          routeCoordinates: routeCoordinates,
+          destinationName: `Route (${routeTargetBins.length} bins)`
+        })
+      });
+      if (res.ok) {
+        setShowDispatchModal(false);
+        setActiveTab('tracking');
+        fetchFleet();
+      }
+    } catch (e) {
+      console.error("Failed to dispatch", e);
+    }
+    setIsDispatching(false);
+  };
+
   useEffect(() => {
     fetchBins();
     fetchFleet();
     const interval = setInterval(() => {
       fetchBins();
       fetchFleet();
-    }, 10000); // refresh every 10s
+    }, 3000); // refresh every 3s
     return () => clearInterval(interval);
   }, [simulateEvent, temperature, useLiveWeather]);
 
@@ -398,6 +450,7 @@ export default function Dashboard() {
               { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
               { id: 'routes', icon: MapIcon, label: 'Live Routing' },
               { id: 'fleet', icon: Truck, label: 'Fleet & Drivers' },
+              { id: 'tracking', icon: Navigation, label: 'Live Tracking' },
               { id: 'analytics', icon: BarChart3, label: 'Predictive Analytics' },
             ].map((item) => (
               <motion.button
@@ -420,7 +473,29 @@ export default function Dashboard() {
             ))}
           </nav>
         </div>
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 space-y-1">
+          <a
+            href="/report"
+            target="_blank"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors duration-200 hover:bg-emerald-900/30 text-slate-400 hover:text-emerald-400"
+          >
+            <div className="flex items-center space-x-3">
+              <Users size={20} />
+              <span className="font-medium">Citizen Portal</span>
+            </div>
+            <ArrowUpRight size={14} className="opacity-50" />
+          </a>
+          <a
+            href="/driver"
+            target="_blank"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors duration-200 hover:bg-emerald-900/30 text-slate-400 hover:text-emerald-400"
+          >
+            <div className="flex items-center space-x-3">
+              <Truck size={20} />
+              <span className="font-medium">Driver Portal</span>
+            </div>
+            <ArrowUpRight size={14} className="opacity-50" />
+          </a>
           <motion.button 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -689,56 +764,36 @@ export default function Dashboard() {
                 <div className="absolute top-4 right-4 z-[400] flex space-x-2">
                   <button 
                     onClick={() => {
-                      setSelectionMode(!selectionMode);
-                      if (!selectionMode) {
-                        setIsCustomRoute(true);
-                      } else {
+                      if (selectionMode) {
+                        setSelectionMode(false);
                         setIsCustomRoute(false);
+                        setSelectedForRoute(new Set());
+                      } else {
+                        setSelectionMode(true);
+                        setIsCustomRoute(true);
                         setSelectedForRoute(new Set());
                       }
                     }}
                     className={`px-4 py-2 rounded-xl font-bold border shadow-sm transition-colors text-sm ${selectionMode ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
                   >
-                    {selectionMode ? 'Exit Selection Mode' : 'Select Bins for Custom Route'}
+                    {selectionMode ? `Exit Selection Mode (${selectedForRoute.size} bins)` : 'Select Bins for Custom Route'}
                   </button>
-                  {selectionMode && selectedForRoute.size > 0 && (
-                     <button
-                       onClick={() => {
-                         // Ensure route is updated
-                         setIsCustomRoute(true);
-                       }}
-                       className="px-4 py-2 rounded-xl font-bold border shadow-sm transition-colors text-sm bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-500"
-                     >
-                       Compute Route for {selectedForRoute.size}
-                     </button>
-                  )}
                 </div>
 
                 {/* Floating Map Actions */}
                 <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[400] flex space-x-4">
-                  {isNavigating ? (
-                    <motion.button 
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setIsNavigating(false)}
-                      className="bg-rose-500 hover:bg-rose-400 text-white shadow-xl shadow-rose-500/20 px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border border-rose-400"
-                    >
-                      <X size={18} />
-                      <span>End Navigation</span>
-                    </motion.button>
-                  ) : (
-                    <motion.button 
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => {
-                        if (routeCoordinates.length > 0) setIsNavigating(true);
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border border-emerald-500"
-                    >
-                      <Truck size={18} />
-                      <span>Start Navigation</span>
-                    </motion.button>
-                  )}
+                  <motion.button 
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      if (routeCoordinates.length > 0) setShowDispatchModal(true);
+                    }}
+                    disabled={routeCoordinates.length === 0}
+                    className={`text-white shadow-xl px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border ${routeCoordinates.length > 0 ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20 border-indigo-500' : 'bg-slate-400 border-slate-400 cursor-not-allowed opacity-70'}`}
+                  >
+                    <Truck size={18} />
+                    <span>Dispatch Truck to Route</span>
+                  </motion.button>
                 </div>
                 
                 {/* Detailed Bin Drawer */}
@@ -783,10 +838,34 @@ export default function Dashboard() {
                               <span className="text-slate-600">Dynamic Threshold</span>
                               <span className="font-bold text-slate-800">{selectedBin.collectionThreshold}%</span>
                             </div>
-                            {selectedBin.hasReport && (
-                              <div className="flex justify-between items-center text-sm bg-rose-50 p-2 rounded-lg text-rose-700 border border-rose-100">
-                                <span className="font-semibold flex items-center"><AlertTriangle size={14} className="mr-1" /> Citizen Report</span>
-                                <span className="font-bold flex items-center">Override</span>
+                            {selectedBin.reportDetails && (
+                              <div className="flex flex-col space-y-2 mt-2 bg-rose-50 p-3 rounded-lg border border-rose-200">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-semibold text-rose-700 text-sm flex items-center">
+                                    <AlertTriangle size={14} className="mr-1" /> Citizen Report
+                                  </span>
+                                  {selectedBin.reportDetails.photoAttached ? (
+                                    <span className="flex items-center text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                                      <Camera size={12} className="mr-1" /> Photo Verified
+                                    </span>
+                                  ) : (
+                                    <span className="flex items-center text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-bold">
+                                      Unverified
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex justify-between items-center text-xs mt-1">
+                                  <span className="text-slate-600 font-medium">User Trust Score</span>
+                                  <span className={`font-bold ${selectedBin.reportDetails.trustScore > 80 ? 'text-emerald-600' : 'text-orange-600'}`}>
+                                    {selectedBin.reportDetails.trustScore}%
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => markReportFake(selectedBin.reportDetails.id, selectedBin.id)}
+                                  className="mt-2 w-full flex items-center justify-center py-1.5 bg-white hover:bg-rose-100 border border-rose-200 text-rose-700 font-semibold rounded text-xs transition-colors"
+                                >
+                                  <ThumbsDown size={14} className="mr-1.5" /> Mark as Fake (Driver Override)
+                                </button>
                               </div>
                             )}
                             <div className="border-t pt-2 flex justify-between items-center text-sm">
@@ -991,11 +1070,80 @@ export default function Dashboard() {
             </div>
           </div>
           )}
-          {activeTab === 'fleet' && <FleetView drivers={drivers} />}
+          {activeTab === 'fleet' && <FleetView drivers={drivers} onUpdate={fetchFleet} />}
+          {activeTab === 'tracking' && <TrackingView drivers={drivers} />}
           {activeTab === 'analytics' && <AnalyticsView />}
           {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>
+
+      <AnimatePresence>
+        {showDispatchModal && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden relative"
+            >
+              <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="font-bold text-slate-800 text-lg flex items-center">
+                  <Truck size={20} className="mr-2 text-indigo-500" /> Dispatch Truck
+                </h3>
+                <button onClick={() => setShowDispatchModal(false)} className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-slate-200 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm font-medium text-slate-500">
+                  Select an available driver to dispatch on the calculated route ({routeTargetBins.length} bins, {(routeDetails?.distance ?? 0) / 1000}km).
+                </p>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+                  {drivers.filter(d => d.status !== 'active').map(driver => (
+                    <div 
+                      key={driver.id}
+                      onClick={() => setSelectedDriverId(driver.id)}
+                      className={`p-3 rounded-xl border-2 flex cursor-pointer transition-colors ${selectedDriverId === driver.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-100 hover:border-indigo-200'}`}
+                    >
+                      <div className="flex-1">
+                        <div className="font-bold text-slate-800 flex justify-between items-center">
+                          {driver.name}
+                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${driver.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {driver.status}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1 font-semibold">
+                          ID: {driver.id} • Truck: {driver.truck}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {drivers.filter(d => d.status !== 'active').length === 0 && (
+                    <div className="text-center p-4 text-sm font-medium text-slate-500 bg-slate-50 rounded-xl">
+                      No drivers available.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end space-x-3">
+                <button 
+                  onClick={() => setShowDispatchModal(false)}
+                  className="px-4 py-2 font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-xl transition-colors text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDispatch}
+                  disabled={!selectedDriverId || isDispatching}
+                  className={`px-5 py-2 font-bold rounded-xl text-white shadow-md text-sm transition-colors flex items-center ${(!selectedDriverId || isDispatching) ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/30'}`}
+                >
+                  {isDispatching ? 'Dispatching...' : 'Confirm Dispatch'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

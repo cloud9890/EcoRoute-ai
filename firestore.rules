@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+    
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return isSignedIn() && request.auth.token.email_verified == true && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidBin(data) {
+      return data.keys().hasAll(['id', 'lat', 'lng', 'fillLevel', 'zone', 'lastUpdated', 'isPriority', 'isManualPriority', 'baseFillRate', 'type']) &&
+        data.id is string && data.id.size() <= 64 &&
+        data.lat is number && data.lng is number &&
+        data.fillLevel is number && data.fillLevel >= 0 && data.fillLevel <= 100 &&
+        data.zone is string && data.zone.size() <= 100 &&
+        data.lastUpdated is string && data.lastUpdated.size() <= 64 &&
+        data.isPriority is bool && data.isManualPriority is bool &&
+        data.baseFillRate is number &&
+        data.type is string && (data.type == 'commercial' || data.type == 'residential' || data.type == 'industrial');
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && request.auth.token.email_verified == true;
+    }
+
+    match /bins/{binId} {
+      allow read: if true; // Public route planning / dashboard
+      allow create: if true && isValidBin(incoming()) && incoming().id == binId;
+      allow update: if true && isValidBin(incoming()) && incoming().diff(existing()).affectedKeys().hasAny(['fillLevel', 'lastUpdated', 'isPriority', 'isManualPriority', 'baseFillRate', 'type', 'lat', 'lng', 'zone']);
+      allow delete: if true;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['id', 'binId', 'isOverflowing', 'timestamp', 'userId', 'trustScore', 'photoAttached', 'markedFake']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.binId is string && data.binId.size() <= 64 &&
+        data.isOverflowing is bool &&
+        data.timestamp is string && data.timestamp.size() <= 64 &&
+        data.userId is string &&
+        data.trustScore is number && data.trustScore >= 0 && data.trustScore <= 100 &&
+        data.photoAttached is bool &&
+        data.markedFake is bool;
+    }
+
+    match /reports/{reportId} {
+      allow read: if true; // Dispatch dashboard needs to read reports
+      allow create: if isSignedIn() && isValidReport(incoming()) && incoming().id == reportId && incoming().markedFake == false;
+      allow update: if true && isValidReport(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['markedFake']);
+    }
+
+    function isValidCitizen(data) {
+      return data.keys().hasAll(['userId', 'reliabilityScore', 'fakeReports']) &&
+        data.userId is string &&
+        data.reliabilityScore is number && data.reliabilityScore >= 0 && data.reliabilityScore <= 100 &&
+        data.fakeReports is number && data.fakeReports >= 0;
+    }
+
+    match /citizens/{citizenId} {
+      allow read: if true; // For dashboard view
+      allow create: if isSignedIn() && isValidCitizen(incoming()) && incoming().userId == citizenId && citizenId == request.auth.uid && incoming().reliabilityScore == 100 && incoming().fakeReports == 0;
+      allow update: if true && isValidCitizen(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['reliabilityScore', 'fakeReports']);
+    }
+  }
+}

@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Truck, User, MapPin, CheckCircle2, Clock, Phone, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Truck, User, MapPin, CheckCircle2, Clock, Phone, AlertTriangle, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
 
-export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
+export default function FleetView({ drivers = [], onUpdate }: { drivers?: any[], onUpdate?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(new Date());
+  const [aiCoachInsight, setAiCoachInsight] = useState<string | null>(null);
+  const [generatingAi, setGeneratingAi] = useState(false);
   
   // Create a local state to allow optimistic updates, updated when props change
   const [localDrivers, setLocalDrivers] = useState<any[]>(drivers);
@@ -15,6 +18,10 @@ export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
   }, [drivers]);
 
   const toggleDriverStatus = async (id: string) => {
+    const driver = localDrivers.find(d => d.id === id);
+    if (!driver) return;
+    const newStatus = driver.status === 'active' ? 'break' : 'active';
+
     // Optimistic UI update
     setLocalDrivers(localDrivers.map(d => {
       if (d.id === id) {
@@ -23,6 +30,42 @@ export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
       }
       return d;
     }));
+
+    try {
+      await fetch(`/api/drivers/${id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (onUpdate) onUpdate();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleGenerateCoachInsight = async () => {
+    setGeneratingAi(true);
+    try {
+      const prompt = `
+        You are an AI Fleet Manager. Look at these drivers and their fatigue/idle metrics. 
+        Give a 2-sentence piece of operational advice. Should anyone take a break immediately? 
+        Who is performing best?
+        
+        Drivers: \${JSON.stringify(localDrivers.map(d => ({ name: d.name, fatigue: d.fatigueLevel, status: d.status, idle: d.idleTime })))}
+      `;
+
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await aiClient.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: prompt,
+      });
+
+      setAiCoachInsight(response.text || "Insight generation failed.");
+    } catch (error) {
+      console.error(error);
+      setAiCoachInsight("Failed to generate AI insight. Ensure your API key is correctly configured.");
+    }
+    setGeneratingAi(false);
   };
 
   return (
@@ -44,6 +87,42 @@ export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
           <Truck size={18} className="mr-2" /> Dispatch New Vehicle
         </button>
       </div>
+
+      {/* AI Fleet Coach Panel */}
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+        className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 shadow-sm relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 p-4 opacity-10">
+          <Sparkles size={64} className="text-indigo-600" />
+        </div>
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center relative z-10">
+          <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-md shadow-indigo-600/30 shrink-0">
+            <Sparkles size={24} />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-indigo-950 text-lg mb-1">AI Fleet Coach</h3>
+            <div className="text-indigo-800/80 text-sm font-medium">
+              {aiCoachInsight ? (
+                <p className="leading-relaxed">{aiCoachInsight}</p>
+              ) : (
+                <p>Monitor real-time fatigue and operations with AI-driven interventions.</p>
+              )}
+            </div>
+          </div>
+          <button 
+            onClick={handleGenerateCoachInsight}
+            disabled={generatingAi}
+            className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-sm transition-colors shadow-sm shadow-indigo-600/20 flex items-center"
+          >
+            {generatingAi ? (
+              <><Loader2 size={16} className="animate-spin mr-2" /> Analyzing Fleet...</>
+            ) : (
+              <><Sparkles size={16} className="mr-2" /> Generate Coach Report</>
+            )}
+          </button>
+        </div>
+      </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <AnimatePresence>
@@ -84,6 +163,34 @@ export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
                    <div className={`h-2 rounded-full ${driver.fillLevel > 75 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${driver.fillLevel}%` }}></div>
                  </div>
                </div>
+
+               {/* Fatigue & Performance Monitor */}
+               {(driver.fatigueLevel !== undefined) && (
+                 <div className="pt-2 border-t border-slate-200 space-y-2">
+                   <div>
+                     <div className="flex justify-between text-xs font-semibold text-slate-500 mb-1">
+                       <span className="flex items-center">
+                         {driver.fatigueLevel > 80 && <AlertTriangle size={12} className="text-rose-500 mr-1 animate-pulse" />}
+                         Fatigue Level
+                       </span>
+                       <span className={driver.fatigueLevel > 80 ? 'text-rose-600' : ''}>{Math.round(driver.fatigueLevel)}%</span>
+                     </div>
+                     <div className="w-full bg-slate-200 rounded-full h-1.5">
+                       <div className={`h-1.5 rounded-full ${driver.fatigueLevel > 80 ? 'bg-rose-500' : driver.fatigueLevel > 50 ? 'bg-amber-400' : 'bg-emerald-400'}`} style={{ width: `${driver.fatigueLevel}%` }}></div>
+                     </div>
+                   </div>
+                   <div className="flex justify-between text-xs font-medium text-slate-600">
+                     <span className="flex items-center" title="Idle Time">
+                       <Clock size={12} className="mr-1 text-slate-400" /> 
+                       Idle: {driver.idleTime}m
+                     </span>
+                     <span className="flex items-center" title="Route Adherence">
+                       <MapPin size={12} className="mr-1 text-slate-400" />
+                       Adherence: {driver.routeAdherence}%
+                     </span>
+                   </div>
+                 </div>
+               )}
                
                {driver.status === 'active' && (
                  <div className="text-sm font-medium text-slate-600 flex flex-col space-y-1 pt-1">

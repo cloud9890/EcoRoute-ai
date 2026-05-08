@@ -1,7 +1,8 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
-import { TrendingDown, Leaf, DollarSign, Activity } from 'lucide-react';
+import { TrendingDown, Leaf, DollarSign, Activity, Sparkles, Loader2 } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
 
 const collectionHistory = [
   { day: 'Mon', completed: 420, optimized: 380 },
@@ -31,6 +32,35 @@ const complaintData = [
 const COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6'];
 
 export default function AnalyticsView() {
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+  const [generatingAi, setGeneratingAi] = useState(false);
+
+  const handleGenerateInsight = async () => {
+    setGeneratingAi(true);
+    try {
+      const prompt = `
+        You are an elite data analyst for a smart city waste management system. 
+        Analyze the following weekly data and provide a concise 2-sentence executive summary with actionable advice. 
+        Do not use markdown formatting.
+        
+        Collection History: \${JSON.stringify(collectionHistory)}
+        Complaints: \${JSON.stringify(complaintData)}
+      `;
+
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await aiClient.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: prompt,
+      });
+
+      setAiInsight(response.text || "Insight generation failed.");
+    } catch (error) {
+      console.error(error);
+      setAiInsight("Failed to generate AI insight. Ensure your API key is correctly configured.");
+    }
+    setGeneratingAi(false);
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
@@ -44,6 +74,42 @@ export default function AnalyticsView() {
            <button className="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-500 hover:text-slate-700">All Time</button>
         </div>
       </div>
+
+      {/* AI Analyst Panel */}
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+        className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 shadow-sm relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 p-4 opacity-10">
+          <Sparkles size={64} className="text-indigo-600" />
+        </div>
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center relative z-10">
+          <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-md shadow-indigo-600/30 shrink-0">
+            <Sparkles size={24} />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-indigo-950 text-lg mb-1">AI Data Analyst</h3>
+            <div className="text-indigo-800/80 text-sm font-medium">
+              {aiInsight ? (
+                <p className="leading-relaxed">{aiInsight}</p>
+              ) : (
+                <p>Generate intelligent executive summaries and strategic recommendations based on current metrics.</p>
+              )}
+            </div>
+          </div>
+          <button 
+            onClick={handleGenerateInsight}
+            disabled={generatingAi}
+            className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-sm transition-colors shadow-sm shadow-indigo-600/20 flex items-center"
+          >
+            {generatingAi ? (
+              <><Loader2 size={16} className="animate-spin mr-2" /> Analyzing Data...</>
+            ) : (
+              <><Sparkles size={16} className="mr-2" /> Generate Report</>
+            )}
+          </button>
+        </div>
+      </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
          {[

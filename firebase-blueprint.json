@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Bin": {
+      "title": "Bin",
+      "description": "A smart dustbin in the city.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "fillLevel": { "type": "number" },
+        "zone": { "type": "string" },
+        "lastUpdated": { "type": "string" },
+        "isPriority": { "type": "boolean" },
+        "isManualPriority": { "type": "boolean" },
+        "baseFillRate": { "type": "number" },
+        "type": { "type": "string", "enum": ["commercial", "residential", "industrial"] }
+      },
+      "required": ["id", "lat", "lng", "fillLevel", "zone", "lastUpdated", "isPriority", "isManualPriority", "baseFillRate", "type"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Citizen report of a bin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "binId": { "type": "string" },
+        "isOverflowing": { "type": "boolean" },
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" },
+        "trustScore": { "type": "number" },
+        "photoAttached": { "type": "boolean" },
+        "markedFake": { "type": "boolean" }
+      },
+      "required": ["id", "binId", "isOverflowing", "timestamp", "userId", "trustScore", "photoAttached", "markedFake"]
+    },
+    "Citizen": {
+      "title": "Citizen",
+      "description": "Trust profiling for citizen users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "reliabilityScore": { "type": "number" },
+        "fakeReports": { "type": "number" }
+      },
+      "required": ["userId", "reliabilityScore", "fakeReports"]
+    }
+  },
+  "firestore": {
+    "/bins/{binId}": {
+      "schema": { "$ref": "#/entities/Bin" },
+      "description": "Stores the physical bin data and parameters."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Stores citizen reports."
+    },
+    "/citizens/{citizenId}": {
+      "schema": { "$ref": "#/entities/Citizen" },
+      "description": "Stores citizen trust score profile."
+    }
+  }
+}

@@ -82,3 +82,7 @@ html.dark .group:hover .group-hover\:bg-white { background-color: #1e293b !impor
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+.smooth-marker {
+  transition: transform 3000ms linear;
+}

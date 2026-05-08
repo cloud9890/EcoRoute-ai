@@ -22,7 +22,23 @@ async function startServer() {
     { id: '7', lat: 28.6340, lng: 77.2150, fillLevel: 88, zone: 'Baba Kharak Singh Rd', lastUpdated: 'Just now', isPriority: true, isManualPriority: false, baseFillRate: 1.6, type: 'commercial' },
   ];
 
-  const citizenReports: any[] = [];
+  interface UserTrust {
+    userId: string;
+    reliabilityScore: number;
+    fakeReports: number;
+  }
+
+  // Import Firebase web SDK instead of admin
+  const { initializeApp } = await import('firebase/app');
+  const { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, where } = await import('firebase/firestore');
+  const fs = await import('fs');
+  const pathModule = await import('path');
+  const configPath = pathModule.join(process.cwd(), 'firebase-applet-config.json');
+  const configStr = fs.readFileSync(configPath, 'utf8');
+  const firebaseConfig = JSON.parse(configStr);
+
+  const firebaseApp = initializeApp(firebaseConfig);
+  const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
   // === MACHINE LEARNING ENGINE: MOCK RANDOM FOREST ===
   // This simulates a Random Forest model estimating fill rate based on:
@@ -54,26 +70,115 @@ async function startServer() {
   }
 
   // === MOCK FLEET DATABASE ===
-  const fleetDrivers = [
-    { id: 'D-101', name: 'Alex Johnson', status: 'active', truck: 'TRK-402', fillLevel: 30, location: 'Barakhamba Road', destination: 'Bin #1', eta: '5 min', lat: 28.6290, lng: 77.2190 },
-    { id: 'D-102', name: 'Sarah Miller', status: 'break', truck: 'TRK-405', fillLevel: 80, location: 'Depot (NDLS)', destination: '-', eta: '-', lat: 28.6415, lng: 77.2183 },
-    { id: 'D-103', name: 'Mike Chen', status: 'active', truck: 'TRK-408', fillLevel: 10, location: 'Connaught Place', destination: 'Bin #4', eta: '2 min', lat: 28.6310, lng: 77.2170 },
-    { id: 'D-104', name: 'Emily Davis', status: 'off-duty', truck: 'TRK-412', fillLevel: 0, location: 'Depot (Sadar)', destination: '-', eta: '-', lat: 28.6500, lng: 77.2000 }
+  const fleetDrivers: any[] = [
+    { id: 'D-101', name: 'Alex Johnson', status: 'break', truck: 'TRK-402', fillLevel: 30, location: 'Barakhamba Road', destination: '-', eta: '-', lat: 28.6290, lng: 77.2190, routeCoordinates: null, currentRouteIndex: 0, fatigueLevel: 65, idleTime: 15, routeAdherence: 95, history: [], speed: 0 },
+    { id: 'D-102', name: 'Sarah Miller', status: 'break', truck: 'TRK-405', fillLevel: 80, location: 'Depot (NDLS)', destination: '-', eta: '-', lat: 28.6415, lng: 77.2183, routeCoordinates: null, currentRouteIndex: 0, fatigueLevel: 25, idleTime: 45, routeAdherence: 98, history: [], speed: 0 },
+    { id: 'D-103', name: 'Mike Chen', status: 'break', truck: 'TRK-408', fillLevel: 10, location: 'Connaught Place', destination: '-', eta: '-', lat: 28.6310, lng: 77.2170, routeCoordinates: null, currentRouteIndex: 0, fatigueLevel: 85, idleTime: 5, routeAdherence: 70, history: [], speed: 0 },
+    { id: 'D-104', name: 'Emily Davis', status: 'off-duty', truck: 'TRK-412', fillLevel: 0, location: 'Depot (Sadar)', destination: '-', eta: '-', lat: 28.6500, lng: 77.2000, routeCoordinates: null, currentRouteIndex: 0, fatigueLevel: 0, idleTime: 0, routeAdherence: 100, history: [], speed: 0 }
   ];
 
   function updateFleetMovement() {
     fleetDrivers.forEach(driver => {
+      // Append current location to history
+      if (!driver.history) driver.history = [];
+      driver.history.push([driver.lat, driver.lng]);
+      if (driver.history.length > 50) driver.history.shift(); // Keep last 50 points
+
+      // Fatigue logic
       if (driver.status === 'active') {
-        // Move slightly randomly
-        driver.lat += (Math.random() - 0.5) * 0.001;
-        driver.lng += (Math.random() - 0.5) * 0.001;
-        driver.fillLevel = Math.max(0, Math.min(100, Math.floor(driver.fillLevel + (Math.random() * 5 - 1)))); 
+        driver.fatigueLevel = Math.min(100, driver.fatigueLevel + (Math.random() * 0.5));
+        driver.idleTime = 0;
       } else if (driver.status === 'break') {
-        const wantsActive = Math.random() > 0.9;
-        if (wantsActive) driver.status = 'active';
+        driver.fatigueLevel = Math.max(0, driver.fatigueLevel - (Math.random() * 1.5));
+        driver.idleTime += 1;
+      }
+      
+      if (driver.status === 'active' && driver.routeCoordinates && driver.routeCoordinates.length > 0) {
+        // Move towards the next coordinate
+        const target = driver.routeCoordinates[driver.currentRouteIndex];
+        if (!target) {
+          driver.status = 'break';
+          driver.destination = '-';
+          driver.routeCoordinates = null;
+          driver.currentRouteIndex = 0;
+          driver.speed = 0;
+          return;
+        }
+
+        const dx = target[0] - driver.lat;
+        const dy = target[1] - driver.lng;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Speed
+        const speed = 0.002;
+        driver.speed = Math.round(Math.random() * 15 + 35); // mock speed between 35-50 km/h
+        
+        if (distance < speed) {
+          driver.lat = target[0];
+          driver.lng = target[1];
+          driver.currentRouteIndex += 5; // skip points to move faster visually
+          
+          if (driver.currentRouteIndex >= driver.routeCoordinates.length) {
+            // Reached destination
+            driver.status = 'break';
+            driver.destination = 'Completed';
+            driver.routeCoordinates = null;
+            driver.currentRouteIndex = 0;
+            driver.speed = 0;
+          }
+        } else {
+          driver.lat += (dx / distance) * speed;
+          driver.lng += (dy / distance) * speed;
+        }
+
+        driver.fillLevel = Math.max(0, Math.min(100, Math.floor(driver.fillLevel + (Math.random() * 2))));
+      } else if (driver.status === 'active') {
+         // Random fallback (stationary or tiny movements)
+         driver.lat += (Math.random() - 0.5) * 0.0001;
+         driver.lng += (Math.random() - 0.5) * 0.0001;
+         driver.speed = Math.round(Math.random() * 5 + 5);
+      } else {
+         driver.speed = 0;
       }
     });
   }
+
+  app.post("/api/dispatch", (req, res) => {
+    const { driverId, routeCoordinates, destinationName } = req.body;
+    const driver = fleetDrivers.find(d => d.id === driverId);
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+
+    driver.status = 'active';
+    driver.routeCoordinates = routeCoordinates;
+    driver.currentRouteIndex = 0;
+    driver.destination = destinationName || 'Assigned Route';
+    
+    // Teleport to start of route if needed
+    if (routeCoordinates && routeCoordinates.length > 0) {
+      driver.lat = routeCoordinates[0][0];
+      driver.lng = routeCoordinates[0][1];
+    }
+    
+    res.json({ success: true, driver });
+  });
+
+  app.post("/api/drivers/:id/status", (req, res) => {
+    const { status } = req.body;
+    const driverId = req.params.id;
+    const driver = fleetDrivers.find(d => d.id === driverId);
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+
+    driver.status = status;
+    if (status === 'break') {
+      driver.eta = '-';
+      driver.destination = '-';
+      driver.speed = 0;
+    } else {
+      driver.eta = 'Calculating';
+      driver.destination = 'Assigning...';
+    }
+    res.json({ success: true, driver });
+  });
 
   // API Routes
   app.get("/api/config", (req, res) => {
@@ -281,8 +386,24 @@ async function startServer() {
       if (isNaN(tempC)) tempC = 22;
     }
 
+    let citizenReports: any[] = [];
+    try {
+      const reportsSnap = await getDocs(collection(db, 'reports'));
+      citizenReports = reportsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.error("Failed to fetch reports from Firebase", e);
+    }
+
     const predictedBins = binsList.map(bin => {
-      const hasReport = citizenReports.some(report => report.binId === bin.id && Date.now() - new Date(report.timestamp).getTime() < 3600000); // report within last hour
+      // Find valid recent reports (not marked fake, within an hour)
+      const recentReports = citizenReports.filter(report => 
+        report.binId === bin.id && 
+        Date.now() - new Date(report.timestamp).getTime() < 3600000 &&
+        !report.markedFake
+      );
+      
+      const trustedReports = recentReports.filter(r => r.trustScore >= 50);
+      const hasReport = trustedReports.length > 0;
       
       let predictedFillLevel = Math.round(predictFillLevel(bin, hasEvent, tempC, hasReport));
       if (bin.isManualPriority) predictedFillLevel = 100; // Force route override
@@ -301,6 +422,7 @@ async function startServer() {
         ...bin,
         predictedFillLevel,
         hasReport,
+        reportDetails: recentReports.length > 0 ? recentReports[recentReports.length - 1] : null,
         collectionThreshold,
         needsCollection
       };
@@ -310,6 +432,20 @@ async function startServer() {
   });
 
   // Priority Toggle Endpoint
+  app.post("/api/bins/:id/collect", (req, res) => {
+    const binId = req.params.id;
+    const bin = binsList.find(b => b.id === binId);
+    if (!bin) return res.status(404).json({ error: "Bin not found" });
+
+    // Mark collected
+    bin.fillLevel = 0;
+    bin.predictedFillLevel = 0;
+    bin.needsCollection = false;
+    bin.collectionThreshold = 80;
+
+    res.json({ success: true, bin });
+  });
+
   app.post("/api/bins/:id/priority", (req, res) => {
     const bin = binsList.find(b => b.id === req.params.id);
     if (!bin) return res.status(404).json({ error: "Bin not found" });
@@ -318,22 +454,43 @@ async function startServer() {
     res.json({ success: true, bin });
   });
 
-  // Citizen Report Endpoint
-  app.post("/api/reports", (req, res) => {
-    const { binId, isOverflowing } = req.body;
-    if (!binId) return res.status(400).json({ error: "Missing binId" });
+  // Verify report endpoint
+  app.post("/api/reports/:id/verify", async (req, res) => {
+    const reportId = req.params.id;
+    const { isFake } = req.body;
 
-    const newReport = {
-      id: Math.random().toString(36).substr(2, 9),
-      binId,
-      isOverflowing,
-      timestamp: new Date().toISOString()
-    };
-    
-    citizenReports.push(newReport);
-    console.log(`New citizen report received for Bin ${binId}`);
-    
-    res.json({ success: true, report: newReport });
+    try {
+      const reportRef = doc(db, 'reports', reportId);
+      const reportDoc = await getDoc(reportRef);
+
+      if (!reportDoc.exists()) return res.status(404).json({ error: "Report not found" });
+
+      const report = reportDoc.data();
+      
+      if (isFake) {
+        await updateDoc(reportRef, { markedFake: true });
+
+        // Penalize user
+        if (report && report.userId) {
+          const userRef = doc(db, 'citizens', report.userId);
+          const userDoc = await getDoc(userRef);
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            const newScore = Math.max(0, (userData?.reliabilityScore || 100) - 20);
+            await updateDoc(userRef, {
+              fakeReports: (userData?.fakeReports || 0) + 1,
+              reliabilityScore: newScore
+            });
+            console.log(`User ${report.userId} penalized. New score: ${newScore}`);
+            return res.json({ success: true, userScore: newScore });
+          }
+        }
+      }
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Vite middleware for development
