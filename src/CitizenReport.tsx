@@ -95,7 +95,7 @@ export default function CitizenReport() {
         </div>
       </motion.div>
       <div className="mt-8 text-slate-400 text-sm font-medium">
-        Powered by EcoRoute AI
+        Powered by AntiGrid AI
       </div>
     </div>
   );

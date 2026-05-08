@@ -24,11 +24,38 @@ import {
   CheckCircle2,
   X,
   History,
-  Activity
+  Activity,
+  Sparkles,
+  ArrowRight,
+  ArrowLeft,
+  ArrowUp,
+  ArrowUpRight,
+  ArrowUpLeft,
+  CircleDot,
+  Check
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts';
 
-const createCustomIcon = (fillLevel: number) => {
+import AnalyticsView from './AnalyticsView';
+import FleetView from './FleetView';
+import SettingsView from './SettingsView';
+
+
+const getTurnIcon = (modifier: string) => {
+  switch (modifier) {
+    case 'left': return <ArrowLeft size={20} className="text-indigo-600" />;
+    case 'right': return <ArrowRight size={20} className="text-indigo-600" />;
+    case 'straight': return <ArrowUp size={20} className="text-indigo-600" />;
+    case 'slight left': return <ArrowUpLeft size={20} className="text-indigo-600" />;
+    case 'slight right': return <ArrowUpRight size={20} className="text-indigo-600" />;
+    case 'sharp left': return <ArrowLeft size={20} className="text-indigo-600" />;
+    case 'sharp right': return <ArrowRight size={20} className="text-indigo-600" />;
+    case 'uturn': return <ArrowUp size={20} className="text-indigo-600 rotate-180" />;
+    default: return <CircleDot size={20} className="text-indigo-600" />;
+  }
+};
+
+const createCustomIcon = (fillLevel: number, isSelected: boolean = false) => {
   let bgClass = 'bg-emerald-500';
   let borderClass = 'border-emerald-600';
   if (fillLevel >= 80) {
@@ -39,8 +66,11 @@ const createCustomIcon = (fillLevel: number) => {
     borderClass = 'border-amber-500';
   }
 
+  const selectionRing = isSelected ? '<div class="absolute -inset-2 border-2 border-indigo-500 rounded-full animate-pulse"></div>' : '';
+
   const html = `
     <div class="relative flex h-8 w-8 items-center justify-center rounded-full border-[3px] shadow-lg text-white font-bold text-[10px] transform transition-transform hover:scale-110 ${bgClass} ${borderClass}">
+      ${selectionRing}
       ${fillLevel}%
     </div>
   `;
@@ -54,7 +84,7 @@ const createCustomIcon = (fillLevel: number) => {
   });
 };
 
-const DEPOT_COORDS: [number, number] = [40.7100, -74.0040];
+const DEPOT_COORDS: [number, number] = [28.6415, 77.2183];
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -71,6 +101,16 @@ export default function Dashboard() {
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
   const [fetchingRoute, setFetchingRoute] = useState(false);
   const [routeDetails, setRouteDetails] = useState<{distance: number, duration: number} | null>(null);
+  
+  const [navigationSteps, setNavigationSteps] = useState<any[]>([]);
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  const [aiBriefing, setAiBriefing] = useState<string>("Analyzing current network data...");
+  const [fetchingAi, setFetchingAi] = useState(false);
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedForRoute, setSelectedForRoute] = useState<Set<string>>(new Set());
+  const [isCustomRoute, setIsCustomRoute] = useState(false);
 
   const fetchBins = async () => {
     setLoading(true);
@@ -114,12 +154,15 @@ export default function Dashboard() {
   }, [simulateEvent, temperature, useLiveWeather]);
 
   const needingCollection = bins.filter(b => b.needsCollection);
+  const routeTargetBins = isCustomRoute 
+    ? bins.filter(b => selectedForRoute.has(b.id)) 
+    : needingCollection;
   
   useEffect(() => {
     let active = true;
 
     const fetchRoute = async () => {
-      const sortedCollection = [...needingCollection].sort((a, b) => b.predictedFillLevel - a.predictedFillLevel);
+      const sortedCollection = [...routeTargetBins].sort((a, b) => b.predictedFillLevel - a.predictedFillLevel);
       const waypoints = [
         DEPOT_COORDS,
         ...sortedCollection.map(b => [b.lat, b.lng] as [number, number]),
@@ -138,11 +181,11 @@ export default function Dashboard() {
       const coordString = waypoints.map(wp => `${wp[1]},${wp[0]}`).join(';');
       
       try {
-        // Try trip API first for optimized TSP routing
-        const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordString}?source=first&destination=last&roundtrip=true&overview=full&geometries=geojson`);
-        if (!res.ok) throw new Error("Trip service failed");
+        const res = await fetch(`/api/route?coordString=${coordString}`);
+        if (!res.ok) throw new Error("Routing failed");
         
         const data = await res.json();
+        
         if (active && data.trips && data.trips.length > 0) {
           const coords = data.trips[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
           setRouteCoordinates(coords);
@@ -150,38 +193,34 @@ export default function Dashboard() {
             distance: data.trips[0].distance,
             duration: data.trips[0].duration
           });
-        } else {
-          throw new Error("No trips generated");
+          const allSteps = data.trips[0].legs.flatMap((leg: any) => leg.steps);
+          setNavigationSteps(allSteps);
+        } else if (active && data.routes && data.routes.length > 0) {
+          const coords = data.routes[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
+          setRouteCoordinates(coords);
+          setRouteDetails({
+            distance: data.routes[0].distance,
+            duration: data.routes[0].duration
+          });
+          const allSteps = data.routes[0].legs.flatMap((leg: any) => leg.steps);
+          setNavigationSteps(allSteps);
+        } else if (active) {
+          setRouteCoordinates(waypoints);
+          setRouteDetails(null);
+          setNavigationSteps([]);
         }
-      } catch (e) {
-        // Fallback to strict route API
-        try {
-          const resRoute = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson`);
-          const dataRoute = await resRoute.json();
-          if (active && dataRoute.routes && dataRoute.routes.length > 0) {
-            const coords = dataRoute.routes[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
-            setRouteCoordinates(coords);
-            setRouteDetails({
-              distance: dataRoute.routes[0].distance,
-              duration: dataRoute.routes[0].duration
-            });
-          } else if (active) {
-            setRouteCoordinates(waypoints);
-            setRouteDetails(null);
-          }
-        } catch (err) {
-          console.error("Failed to fetch route", err);
-          if (active) {
-            setRouteCoordinates(waypoints);
-            setRouteDetails(null);
-          }
+      } catch (err) {
+        console.error("Failed to fetch route", err);
+        if (active) {
+          setRouteCoordinates(waypoints);
+          setRouteDetails(null);
         }
       } finally {
         if (active) setFetchingRoute(false);
       }
     };
 
-    if (needingCollection.length > 0) {
+    if (routeTargetBins.length > 0) {
       fetchRoute();
     } else {
       setRouteCoordinates([]);
@@ -192,7 +231,42 @@ export default function Dashboard() {
       active = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(needingCollection.map(b => b.id))]);
+  }, [JSON.stringify(routeTargetBins.map(b => b.id))]);
+
+  useEffect(() => {
+    // Only fetch briefing when we have fully calculated routes and bins
+    if (fetchingRoute || bins.length === 0) return;
+    
+    // throttle/debounce slightly to prevent spam
+    const handler = setTimeout(async () => {
+      setFetchingAi(true);
+      try {
+        const res = await fetch("/api/ai-briefing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            binsContext: {
+               needingCollection: needingCollection.length,
+               highUrgency: bins.filter(b => b.predictedFillLevel > 85).length,
+               hasReports: bins.some(b => b.hasReport)
+            },
+            routeDetails,
+            weatherContext: { tempC: temperature, liveWeather: useLiveWeather }
+          })
+        });
+        const data = await res.json();
+        if (data.text) setAiBriefing(data.text);
+      } catch (err) {
+        console.error(err);
+        setAiBriefing("AI Briefing unavailable.");
+      } finally {
+        setFetchingAi(false);
+      }
+    }, 1000);
+
+    return () => clearTimeout(handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchingRoute, routeDetails, useLiveWeather, temperature]);
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
@@ -212,7 +286,7 @@ export default function Dashboard() {
             >
               <Navigation size={24} />
             </motion.div>
-            <span className="text-xl font-bold text-white tracking-tight">EcoRoute<span className="text-emerald-500">AI</span></span>
+            <span className="text-xl font-bold text-white tracking-tight">AntiGrid <span className="text-emerald-500">AI</span></span>
           </div>
           <nav className="p-4 space-y-1">
             {[
@@ -221,26 +295,37 @@ export default function Dashboard() {
               { id: 'fleet', icon: Truck, label: 'Fleet & Drivers' },
               { id: 'analytics', icon: BarChart3, label: 'Predictive Analytics' },
             ].map((item) => (
-              <button
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${
                   activeTab === item.id 
                     ? 'bg-slate-800 text-white shadow-sm' 
-                    : 'hover:bg-slate-800/50 hover:text-emerald-400'
+                    : 'hover:bg-slate-800/50 hover:text-white text-slate-400'
                 }`}
               >
                 <item.icon size={20} className={activeTab === item.id ? "text-emerald-500" : ""} />
                 <span className="font-medium">{item.label}</span>
-              </button>
+              </motion.button>
             ))}
           </nav>
         </div>
         <div className="p-4 border-t border-slate-800">
-          <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg hover:bg-slate-800/50 hover:text-white transition-colors duration-200">
-            <Settings size={20} />
+          <motion.button 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setActiveTab('settings')}
+            className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${
+              activeTab === 'settings' 
+                ? 'bg-slate-800 text-white shadow-sm' 
+                : 'hover:bg-slate-800/50 hover:text-white text-slate-400'
+            }`}
+          >
+            <Settings size={20} className={activeTab === 'settings' ? "text-emerald-500" : ""} />
             <span className="font-medium">Settings</span>
-          </button>
+          </motion.button>
         </div>
       </motion.aside>
 
@@ -275,10 +360,10 @@ export default function Dashboard() {
             </button>
             <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-emerald-500 to-emerald-300 border-2 border-white shadow-sm"></div>
           </div>
-        </header>
-
-        {/* Dashboard Content */}
+        </header>        {/* Dashboard Content */}
         <main className="flex-1 overflow-auto p-8 bg-slate-50/50">
+          
+          {activeTab === 'dashboard' && (
           <div className="max-w-7xl mx-auto space-y-6">
             
             {/* Top Stats Row */}
@@ -353,7 +438,7 @@ export default function Dashboard() {
                 <input 
                   type="range" 
                   min="0" max="40" 
-                  value={temperature}
+                  value={temperature} 
                   onChange={(e) => setTemperature(parseInt(e.target.value))}
                   disabled={useLiveWeather}
                   className="w-24 accent-emerald-500 cursor-pointer"
@@ -371,8 +456,35 @@ export default function Dashboard() {
               </button>
             </motion.div>
 
+            {/* AI Fleet Assistant Briefing */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 shadow-sm flex items-start space-x-4"
+            >
+              <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl shrink-0">
+                <Sparkles size={24} className={fetchingAi ? "animate-pulse" : ""} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="font-bold text-indigo-900 flex items-center">
+                    AntiGrid AI Dispatch Brief
+                  </h3>
+                  {fetchingAi && <span className="text-xs font-semibold text-indigo-400 animate-pulse">Generating...</span>}
+                </div>
+                <p className="text-sm font-medium text-indigo-800/80 leading-relaxed">
+                  {aiBriefing}
+                </p>
+              </div>
+            </motion.div>
+
+          </div>
+          )}
+
+          {activeTab === 'routes' && (
+          <div className="max-w-7xl mx-auto space-y-6">
             {/* Map and Route section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[500px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[700px]">
               
               {/* Map View */}
               <motion.div 
@@ -388,7 +500,7 @@ export default function Dashboard() {
                 </div>
 
                 <MapContainer 
-                  center={[40.7128, -74.0060]} 
+                  center={DEPOT_COORDS} 
                   zoom={14} 
                   style={{ height: '100%', width: '100%', zIndex: 10 }}
                   zoomControl={false}
@@ -398,7 +510,7 @@ export default function Dashboard() {
                     attribution='&copy; OpenStreetMap &copy; CARTO'
                   />
                   
-                  {bins.length > 0 && needingCollection.length > 0 && (
+                  {bins.length > 0 && routeTargetBins.length > 0 && (
                     <Polyline 
                       positions={routeCoordinates} 
                       pathOptions={{ color: '#0ea5e9', weight: 4, opacity: 0.7, dashArray: fetchingRoute ? '8, 10' : undefined, lineJoin: 'round' }} 
@@ -409,9 +521,18 @@ export default function Dashboard() {
                     <Marker 
                       key={bin.id} 
                       position={[bin.lat, bin.lng]}
-                      icon={createCustomIcon(bin.predictedFillLevel)}
+                      icon={createCustomIcon(bin.predictedFillLevel, selectedForRoute.has(bin.id))}
                       eventHandlers={{
-                        click: () => setSelectedBin(bin)
+                        click: () => {
+                          if (selectionMode) {
+                            const newSet = new Set(selectedForRoute);
+                            if (newSet.has(bin.id)) newSet.delete(bin.id);
+                            else newSet.add(bin.id);
+                            setSelectedForRoute(newSet);
+                          } else {
+                            setSelectedBin(bin);
+                          }
+                        }
                       }}
                     />
                   ))}
@@ -428,16 +549,59 @@ export default function Dashboard() {
                   />
                 </MapContainer>
                 
-                {/* Floating Map Actions */}
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[400]">
-                  <motion.button 
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border border-emerald-500"
+                <div className="absolute top-4 right-4 z-[400] flex space-x-2">
+                  <button 
+                    onClick={() => {
+                      setSelectionMode(!selectionMode);
+                      if (!selectionMode) {
+                        setIsCustomRoute(true);
+                      } else {
+                        setIsCustomRoute(false);
+                        setSelectedForRoute(new Set());
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-xl font-bold border shadow-sm transition-colors text-sm ${selectionMode ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
                   >
-                    <Truck size={18} />
-                    <span>Dispatch Automated Route</span>
-                  </motion.button>
+                    {selectionMode ? 'Exit Selection Mode' : 'Select Bins for Custom Route'}
+                  </button>
+                  {selectionMode && selectedForRoute.size > 0 && (
+                     <button
+                       onClick={() => {
+                         // Ensure route is updated
+                         setIsCustomRoute(true);
+                       }}
+                       className="px-4 py-2 rounded-xl font-bold border shadow-sm transition-colors text-sm bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-500"
+                     >
+                       Compute Route for {selectedForRoute.size}
+                     </button>
+                  )}
+                </div>
+
+                {/* Floating Map Actions */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[400] flex space-x-4">
+                  {isNavigating ? (
+                    <motion.button 
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setIsNavigating(false)}
+                      className="bg-rose-500 hover:bg-rose-400 text-white shadow-xl shadow-rose-500/20 px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border border-rose-400"
+                    >
+                      <X size={18} />
+                      <span>End Navigation</span>
+                    </motion.button>
+                  ) : (
+                    <motion.button 
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => {
+                        if (routeCoordinates.length > 0) setIsNavigating(true);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 px-6 py-3 rounded-full font-semibold tracking-wide flex items-center space-x-2 transition-colors border border-emerald-500"
+                    >
+                      <Truck size={18} />
+                      <span>Start Navigation</span>
+                    </motion.button>
+                  )}
                 </div>
                 
                 {/* Detailed Bin Drawer */}
@@ -547,89 +711,145 @@ export default function Dashboard() {
                 </AnimatePresence>
               </motion.div>
 
-              {/* Next Route Sheet */}
+              {/* Route List / Navigation Sheet */}
               <motion.div 
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5, duration: 0.5 }}
                 className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden"
               >
-                <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                  <h3 className="font-bold text-slate-800 text-lg">Next Opti-Route™</h3>
-                  <div className="bg-emerald-100 text-emerald-700 p-2 rounded-lg">
-                    <Calendar size={18} />
-                  </div>
-                </div>
-                <div className="px-6 py-4 border-b border-slate-50">
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-500 font-medium">Estimated Duration</span>
-                    <span className="font-bold text-slate-800">
-                      {fetchingRoute ? <span className="text-emerald-500 animate-pulse">Calculating...</span> : routeDetails ? `${Math.ceil(routeDetails.duration / 60)} mins` : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-500 font-medium">Total Distance</span>
-                    <span className="font-bold text-slate-800">
-                      {fetchingRoute ? '-' : routeDetails ? `${(routeDetails.distance / 1000).toFixed(1)} km` : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500 font-medium">Predicted Overflow Prevention</span>
-                    <span className="font-bold text-emerald-600">100%</span>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2">
-                  <div className="space-y-1">
-                    {needingCollection.length === 0 ? (
-                      <div className="p-8 text-center text-slate-400 font-medium">
-                        <CheckCircle2 size={40} className="mx-auto mb-2 text-emerald-400" />
-                        No bins require collection based on predictions.
+                {isNavigating ? (
+                  <>
+                    <div className="px-6 py-5 border-b border-indigo-100 flex items-center justify-between bg-indigo-50/80">
+                      <h3 className="font-bold text-indigo-900 text-lg flex items-center">
+                        <Navigation size={20} className="mr-2" /> Live Navigation
+                      </h3>
+                      <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold shadow-inner">
+                        {routeDetails ? Math.ceil(routeDetails.duration / 60) : 0} mins
                       </div>
-                    ) : (
-                      needingCollection.sort((a,b) => b.predictedFillLevel - a.predictedFillLevel).map((bin, i) => (
-                        <motion.div
-                          key={bin.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.6 + (i * 0.1) }}
-                          onMouseEnter={() => setHoveredBin(bin.id)}
-                          onMouseLeave={() => setHoveredBin(null)}
-                          className={`group flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
-                            hoveredBin === bin.id ? 'bg-slate-50 shadow-sm border border-slate-200' : 'border border-transparent hover:bg-slate-50/80'
-                          }`}
-                        >
-                          <div className="w-8 h-8 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center font-bold text-xs shrink-0 ring-2 ring-white">
-                            {i + 1}
-                          </div>
-                          <div className="ml-4 flex-1">
-                            <p className="font-semibold text-slate-800 text-sm flex items-center">
-                              Bin #{bin.id}
-                              <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 font-medium border border-rose-100">
-                                {bin.predictedFillLevel}%
-                              </span>
-                              {bin.hasReport && (
-                                <AlertTriangle size={14} className="ml-2 text-rose-500" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                      {navigationSteps.length === 0 ? (
+                        <div className="text-center text-slate-400 py-8 text-sm">No navigation data available.</div>
+                      ) : (
+                        navigationSteps.map((step, idx) => (
+                          <motion.div 
+                            key={idx}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.05 }}
+                            className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-start shadow-sm"
+                          >
+                            <div className="bg-indigo-100 p-2 rounded-lg shrink-0 mt-0.5">
+                              {step.maneuver.type === 'arrive' ? (
+                                <Check size={20} className="text-emerald-600" />
+                              ) : (
+                                getTurnIcon(step.maneuver.modifier)
                               )}
-                            </p>
-                            <p className="text-xs text-slate-500 font-medium flex items-center mt-0.5">
-                              <MapPin size={10} className="mr-1" /> {bin.zone}
-                            </p>
+                            </div>
+                            <div className="ml-4">
+                              <p className="font-bold text-slate-800 text-sm">
+                                {step.maneuver.type === 'depart' && 'Depart'}
+                                {step.maneuver.type === 'turn' && 'Turn'}
+                                {step.maneuver.type === 'continue' && 'Continue'}
+                                {step.maneuver.type === 'new name' && 'Continue'}
+                                {step.maneuver.type === 'arrive' && 'Arrive'}
+                                {step.maneuver.modifier ? ` ${step.maneuver.modifier}` : ''}
+                                {step.name ? ` onto ${step.name}` : ''}
+                              </p>
+                              {step.distance > 0 && (
+                                <p className="text-xs text-slate-500 font-medium mt-1">In {step.distance >= 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m'}</p>
+                              )}
+                            </div>
+                          </motion.div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                      <h3 className="font-bold text-slate-800 text-lg">Next Opti-Route™</h3>
+                      <div className="bg-emerald-100 text-emerald-700 p-2 rounded-lg">
+                        <Calendar size={18} />
+                      </div>
+                    </div>
+                    <div className="px-6 py-4 border-b border-slate-50">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-slate-500 font-medium">Estimated Duration</span>
+                        <span className="font-bold text-slate-800">
+                          {fetchingRoute ? <span className="text-emerald-500 animate-pulse">Calculating...</span> : routeDetails ? `${Math.ceil(routeDetails.duration / 60)} mins` : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-slate-500 font-medium">Total Distance</span>
+                        <span className="font-bold text-slate-800">
+                          {fetchingRoute ? '-' : routeDetails ? `${(routeDetails.distance / 1000).toFixed(1)} km` : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500 font-medium">Predicted Overflow Prevention</span>
+                        <span className="font-bold text-emerald-600">100%</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2">
+                      <div className="space-y-1">
+                        {routeTargetBins.length === 0 ? (
+                          <div className="p-8 text-center text-slate-400 font-medium">
+                            <CheckCircle2 size={40} className="mx-auto mb-2 text-emerald-400" />
+                            No bins selected for routing.
                           </div>
-                          <button className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-emerald-600 transition-all bg-white rounded-lg border border-slate-200 shadow-sm">
-                            <Navigation size={16} />
-                          </button>
-                        </motion.div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div className="p-4 border-t border-slate-100 bg-slate-50">
-                  <p className="text-xs text-slate-500 text-center font-medium">Route dynamically recalculates upon new priority reports.</p>
-                </div>
+                        ) : (
+                          [...routeTargetBins].sort((a,b) => b.predictedFillLevel - a.predictedFillLevel).map((bin, i) => (
+                            <motion.div
+                              key={bin.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.6 + (i * 0.1) }}
+                              onMouseEnter={() => setHoveredBin(bin.id)}
+                              onMouseLeave={() => setHoveredBin(null)}
+                              className={`group flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                                hoveredBin === bin.id ? 'bg-slate-50 shadow-sm border border-slate-200' : 'border border-transparent hover:bg-slate-50/80'
+                              }`}
+                            >
+                              <div className="w-8 h-8 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center font-bold text-xs shrink-0 ring-2 ring-white">
+                                {i + 1}
+                              </div>
+                              <div className="ml-4 flex-1">
+                                <p className="font-semibold text-slate-800 text-sm flex items-center">
+                                  Bin #{bin.id}
+                                  <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 font-medium border border-rose-100">
+                                    {bin.predictedFillLevel}%
+                                  </span>
+                                  {bin.hasReport && (
+                                    <AlertTriangle size={14} className="ml-2 text-rose-500" />
+                                  )}
+                                </p>
+                                <p className="text-xs text-slate-500 font-medium flex items-center mt-0.5">
+                                  <MapPin size={10} className="mr-1" /> {bin.zone}
+                                </p>
+                              </div>
+                              <button className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-emerald-600 transition-all bg-white rounded-lg border border-slate-200 shadow-sm">
+                                <Navigation size={16} />
+                              </button>
+                            </motion.div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-4 border-t border-slate-100 bg-slate-50">
+                      <p className="text-xs text-slate-500 text-center font-medium">Route dynamically recalculates.</p>
+                    </div>
+                  </>
+                )}
               </motion.div>
 
             </div>
           </div>
+          )}
+          {activeTab === 'fleet' && <FleetView />}
+          {activeTab === 'analytics' && <AnalyticsView />}
+          {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>
     </div>

@@ -1,0 +1,132 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Truck, User, MapPin, CheckCircle2, Clock, Phone, AlertTriangle, RefreshCw } from 'lucide-react';
+
+export default function FleetView() {
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  const fetchFleetData = async () => {
+    try {
+      const response = await fetch('/api/fleet');
+      if (response.ok) {
+        const data = await response.json();
+        setDrivers(data.drivers);
+        setLastSync(new Date(data.timestamp));
+      }
+    } catch (e) {
+      console.error("Failed to fetch fleet data", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFleetData();
+    const interval = setInterval(fetchFleetData, 8000); // Poll every 8s
+    return () => clearInterval(interval);
+  }, []);
+
+  const toggleDriverStatus = (id: string) => {
+    // Optimistic UI update
+    setDrivers(drivers.map(d => {
+      if (d.id === id) {
+         if (d.status === 'active') return { ...d, status: 'break', destination: '-', eta: '-' };
+         if (d.status === 'break') return { ...d, status: 'active', destination: 'Assigning...', eta: 'Calculating' };
+      }
+      return d;
+    }));
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="flex justify-between items-end">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Fleet & Driver Management</h2>
+          <div className="flex items-center space-x-2 mt-1">
+            <p className="text-slate-500 font-medium">Real-time tracking powered by External Fleet API.</p>
+            {lastSync && (
+              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full flex items-center">
+                <RefreshCw size={10} className={`mr-1 ${loading ? 'animate-spin' : ''}`} />
+                Last sync: {lastSync.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+        </div>
+        <button className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center">
+          <Truck size={18} className="mr-2" /> Dispatch New Vehicle
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <AnimatePresence>
+          {drivers.map((driver, i) => (
+          <motion.div 
+            key={driver.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.1 }}
+            className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col"
+          >
+            <div className="flex justify-between items-start mb-4">
+              <div className="flex items-center">
+                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 mr-3 shrink-0">
+                  <User size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">{driver.name}</h3>
+                  <p className="text-xs font-semibold text-slate-500">{driver.id} • {driver.truck}</p>
+                </div>
+              </div>
+              <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${
+                driver.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                driver.status === 'break' ? 'bg-amber-100 text-amber-700' :
+                'bg-slate-100 text-slate-500'
+              }`}>
+                {driver.status}
+              </span>
+            </div>
+
+            <div className="space-y-3 mb-6 bg-slate-50 rounded-xl p-3 border border-slate-100">
+               <div>
+                 <div className="flex justify-between text-xs font-semibold text-slate-500 mb-1">
+                   <span>Truck Capacity Limit</span>
+                   <span>{driver.fillLevel}%</span>
+                 </div>
+                 <div className="w-full bg-slate-200 rounded-full h-2">
+                   <div className={`h-2 rounded-full ${driver.fillLevel > 75 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${driver.fillLevel}%` }}></div>
+                 </div>
+               </div>
+               
+               {driver.status === 'active' && (
+                 <div className="text-sm font-medium text-slate-600 flex flex-col space-y-1 pt-1">
+                   <span className="flex items-center"><MapPin size={14} className="mr-2 text-indigo-500" /> Current: {driver.location}</span>
+                   <span className="flex items-center"><Truck size={14} className="mr-2 text-emerald-500" /> En route to: {driver.destination}</span>
+                   <span className="flex items-center"><Clock size={14} className="mr-2 text-amber-500" /> ETA: {driver.eta}</span>
+                 </div>
+               )}
+            </div>
+
+            <div className="mt-auto grid grid-cols-2 gap-2">
+               <button 
+                 onClick={() => toggleDriverStatus(driver.id)}
+                 disabled={driver.status === 'off-duty'}
+                 className="flex items-center justify-center py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-lg text-sm font-bold transition-colors"
+               >
+                 {driver.status === 'break' ? 'Set Active' : 'Set Break'}
+               </button>
+               <button 
+                 disabled={driver.status === 'off-duty'}
+                 className="flex items-center justify-center py-2 border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 rounded-lg text-sm font-bold transition-colors"
+               >
+                 <Phone size={14} className="mr-1" /> Contact
+               </button>
+            </div>
+          </motion.div>
+        ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
