@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { GoogleGenAI } from '@google/genai';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -20,6 +21,7 @@ import {
   MapPin,
   RefreshCw,
   Sun,
+  Moon,
   ThermometerSun,
   CheckCircle2,
   X,
@@ -32,7 +34,8 @@ import {
   ArrowUpRight,
   ArrowUpLeft,
   CircleDot,
-  Check
+  Check,
+  Menu
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts';
 
@@ -86,10 +89,41 @@ const createCustomIcon = (fillLevel: number, isSelected: boolean = false) => {
 
 const DEPOT_COORDS: [number, number] = [28.6415, 77.2183];
 
+let GLOBAL_API_KEY = 
+  process.env.GOOGLE_MAPS_PLATFORM_KEY || 
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY || 
+  '';
+
 export default function Dashboard() {
+  const [mapsApiKey, setMapsApiKey] = useState(GLOBAL_API_KEY);
+  
+  useEffect(() => {
+    if (!mapsApiKey || mapsApiKey === 'YOUR_API_KEY') {
+      fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+          if (data.googleMapsApiKey && data.googleMapsApiKey !== 'YOUR_API_KEY') {
+            GLOBAL_API_KEY = data.googleMapsApiKey;
+            setMapsApiKey(data.googleMapsApiKey);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [mapsApiKey]);
+
+  const hasValidApiKey = Boolean(mapsApiKey) && mapsApiKey !== 'YOUR_API_KEY';
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hoveredBin, setHoveredBin] = useState<string | null>(null);
   const [selectedBin, setSelectedBin] = useState<any | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   // Dashboard state
   const [bins, setBins] = useState<any[]>([]);
@@ -97,6 +131,14 @@ export default function Dashboard() {
   const [simulateEvent, setSimulateEvent] = useState(false);
   const [temperature, setTemperature] = useState(22);
   const [useLiveWeather, setUseLiveWeather] = useState(false);
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
   const [fetchingRoute, setFetchingRoute] = useState(false);
@@ -107,10 +149,14 @@ export default function Dashboard() {
 
   const [aiBriefing, setAiBriefing] = useState<string>("Analyzing current network data...");
   const [fetchingAi, setFetchingAi] = useState(false);
+  const [routingProvider, setRoutingProvider] = useState<string>('osrm');
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedForRoute, setSelectedForRoute] = useState<Set<string>>(new Set());
   const [isCustomRoute, setIsCustomRoute] = useState(false);
+
+  // Fleet State
+  const [drivers, setDrivers] = useState<any[]>([]);
 
   const fetchBins = async () => {
     setLoading(true);
@@ -125,6 +171,16 @@ export default function Dashboard() {
       console.error(e);
     }
     setLoading(false);
+  };
+
+  const fetchFleet = async () => {
+    try {
+      const res = await fetch('/api/fleet');
+      const data = await res.json();
+      setDrivers(data.drivers);
+    } catch (e) {
+      console.error("Failed to fetch fleet data", e);
+    }
   };
 
   const toggleManualPriority = async (binId: string, currentStatus: boolean) => {
@@ -149,7 +205,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchBins();
-    const interval = setInterval(fetchBins, 10000); // refresh every 10s
+    fetchFleet();
+    const interval = setInterval(() => {
+      fetchBins();
+      fetchFleet();
+    }, 10000); // refresh every 10s
     return () => clearInterval(interval);
   }, [simulateEvent, temperature, useLiveWeather]);
 
@@ -185,6 +245,7 @@ export default function Dashboard() {
         if (!res.ok) throw new Error("Routing failed");
         
         const data = await res.json();
+        console.log("Routing received:", {provider: data.provider, routesLen: data.routes?.length, tripsLen: data.trips?.length});
         
         if (active && data.trips && data.trips.length > 0) {
           const coords = data.trips[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
@@ -195,6 +256,7 @@ export default function Dashboard() {
           });
           const allSteps = data.trips[0].legs.flatMap((leg: any) => leg.steps);
           setNavigationSteps(allSteps);
+          setIsNavigating(true);
         } else if (active && data.routes && data.routes.length > 0) {
           const coords = data.routes[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
           setRouteCoordinates(coords);
@@ -204,6 +266,8 @@ export default function Dashboard() {
           });
           const allSteps = data.routes[0].legs.flatMap((leg: any) => leg.steps);
           setNavigationSteps(allSteps);
+          setRoutingProvider(data.provider || (data.routes[0].geometry ? 'google' : 'osrm'));
+          setIsNavigating(true);
         } else if (active) {
           setRouteCoordinates(waypoints);
           setRouteDetails(null);
@@ -241,24 +305,42 @@ export default function Dashboard() {
     const handler = setTimeout(async () => {
       setFetchingAi(true);
       try {
-        const res = await fetch("/api/ai-briefing", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            binsContext: {
-               needingCollection: needingCollection.length,
-               highUrgency: bins.filter(b => b.predictedFillLevel > 85).length,
-               hasReports: bins.some(b => b.hasReport)
-            },
-            routeDetails,
-            weatherContext: { tempC: temperature, liveWeather: useLiveWeather }
-          })
+        const binsContext = {
+          needingCollection: needingCollection.length,
+          highUrgency: bins.filter(b => b.predictedFillLevel > 85).length,
+          hasReports: bins.some(b => b.hasReport)
+        };
+        const weatherContext = { tempC: temperature, liveWeather: useLiveWeather };
+        
+        const prompt = `
+          You are EcoRouteAI, an automated dispatch assistant for a smart city sanitation department.
+          Review the following real-time data and provide a concise, maximum 3-sentence operational brief for the dispatch team.
+          Do not use markdown formatting. Be professional, urgent if necessary, and data-driven. Keep it under 250 characters if possible.
+
+          Context:
+          Weather: ${weatherContext.tempC}°C, Live Weather Enabled: ${weatherContext.liveWeather}
+          Bins that need collection: ${binsContext.needingCollection}
+          Total distance of proposed route: ${routeDetails ? (routeDetails.distance / 1000).toFixed(1) + 'km' : 'N/A'}
+          Estimated duration: ${routeDetails ? Math.ceil(routeDetails.duration / 60) + ' mins' : 'N/A'}
+          High urgency bins: ${binsContext.highUrgency} 
+          Active citizen reports: ${binsContext.hasReports ? 'Yes' : 'No'}
+        `;
+
+        const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await aiClient.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: prompt,
         });
-        const data = await res.json();
-        if (data.text) setAiBriefing(data.text);
-      } catch (err) {
-        console.error(err);
-        setAiBriefing("AI Briefing unavailable.");
+
+        if (response.text) {
+           setAiBriefing(response.text);
+        } else {
+           setAiBriefing("No insights generated.");
+        }
+      } catch (err: any) {
+        console.error("Gemini Frontend Error:", err);
+        const errMsg = err.message || String(err);
+        setAiBriefing(`AI Briefing ERROR: ${errMsg}`);
       } finally {
         setFetchingAi(false);
       }
@@ -269,24 +351,47 @@ export default function Dashboard() {
   }, [fetchingRoute, routeDetails, useLiveWeather, temperature]);
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
+    <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
+      {/* Sidebar Overlay for Mobile */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <motion.aside 
-        initial={{ x: -250 }}
-        animate={{ x: 0 }}
-        transition={{ type: 'spring', stiffness: 200, damping: 20 }}
-        className="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between"
+        initial={false}
+        animate={{ 
+          x: (isMobileMenuOpen || isDesktop) ? 0 : -256,
+        }}
+        transition={{ type: 'spring', stiffness: 250, damping: 25 }}
+        className={`fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 flex flex-col justify-between z-50 lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out`}
       >
         <div>
-          <div className="h-16 flex items-center px-6 border-b border-slate-800">
-            <motion.div 
-              whileHover={{ rotate: 180 }}
-              transition={{ duration: 0.3 }}
-              className="mr-3 text-emerald-500"
+          <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800">
+            <div className="flex items-center">
+              <motion.div 
+                whileHover={{ rotate: 180 }}
+                transition={{ duration: 0.3 }}
+                className="mr-3 text-emerald-500"
+              >
+                <Navigation size={24} />
+              </motion.div>
+              <span className="text-xl font-bold text-white tracking-tight">AntiGrid <span className="text-emerald-500">AI</span></span>
+            </div>
+            <button 
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="lg:hidden p-2 text-slate-400 hover:text-white"
             >
-              <Navigation size={24} />
-            </motion.div>
-            <span className="text-xl font-bold text-white tracking-tight">AntiGrid <span className="text-emerald-500">AI</span></span>
+              <X size={20} />
+            </button>
           </div>
           <nav className="p-4 space-y-1">
             {[
@@ -299,7 +404,10 @@ export default function Dashboard() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setIsMobileMenuOpen(false);
+                }}
                 className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${
                   activeTab === item.id 
                     ? 'bg-slate-800 text-white shadow-sm' 
@@ -316,7 +424,10 @@ export default function Dashboard() {
           <motion.button 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => setActiveTab('settings')}
+            onClick={() => {
+              setActiveTab('settings');
+              setIsMobileMenuOpen(false);
+            }}
             className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${
               activeTab === 'settings' 
                 ? 'bg-slate-800 text-white shadow-sm' 
@@ -332,36 +443,49 @@ export default function Dashboard() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 z-10 shrink-0">
-          <div className="flex items-center space-x-4">
-            <div className="text-sm font-medium text-slate-500">
-              Department of Sanitation <span className="mx-2">•</span> District 1A
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 z-10 shrink-0">
+          <div className="flex items-center space-x-2 md:space-x-4">
+            <button 
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="lg:hidden p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+            >
+              <Menu size={24} />
+            </button>
+            <div className="hidden sm:block text-sm font-medium text-slate-500">
+              Department of Sanitation <span className="mx-2 hidden md:inline">•</span> <span className="hidden md:inline">District 1A</span>
             </div>
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="bg-emerald-100/50 text-emerald-700 px-3 py-1 rounded-full text-xs font-semibold flex items-center"
+              className="bg-emerald-100/50 text-emerald-700 px-2 md:px-3 py-1 rounded-full text-[10px] md:text-xs font-semibold flex items-center"
             >
               <div className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse mt-[1px]"></div>
-              System Active
+              <span className="hidden xs:inline">System Active</span>
             </motion.div>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <div className="relative group">
+          <div className="flex items-center space-x-2 md:space-x-4">
+            <div className="relative group hidden md:block">
               <input 
                 type="text" 
-                placeholder="Search bins, drivers..." 
-                className="pl-10 pr-4 py-2 border border-slate-200 rounded-full text-sm bg-slate-50 flex focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all w-64 group-hover:bg-white"
+                placeholder="Search..." 
+                className="pl-10 pr-4 py-2 border border-slate-200 rounded-full text-sm bg-slate-50 flex focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all w-48 lg:w-64 group-hover:bg-white"
               />
               <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
             </div>
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="relative p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
+              title="Toggle Dark Mode"
+            >
+              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
             <button className="relative p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors">
               <Bell size={20} />
             </button>
             <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-emerald-500 to-emerald-300 border-2 border-white shadow-sm"></div>
           </div>
         </header>        {/* Dashboard Content */}
-        <main className="flex-1 overflow-auto p-8 bg-slate-50/50">
+        <main className="flex-1 overflow-auto p-4 md:p-8 bg-slate-50/50">
           
           {activeTab === 'dashboard' && (
           <div className="max-w-7xl mx-auto space-y-6">
@@ -400,7 +524,7 @@ export default function Dashboard() {
             {/* Simulators */}
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-wrap items-center gap-4 lg:gap-6"
+              className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-4 lg:gap-6"
             >
               <div className="text-sm font-bold text-slate-800 flex items-center shrink-0">
                 <CloudLightning size={16} className="text-emerald-500 mr-2" /> ML Context
@@ -408,29 +532,33 @@ export default function Dashboard() {
               
               <div className="hidden lg:block h-8 w-px bg-slate-200"></div>
               
-              <label className="flex items-center space-x-2 text-sm text-slate-700 font-medium cursor-pointer shrink-0">
-                <input 
-                  type="checkbox" 
-                  checked={simulateEvent}
-                  onChange={(e) => setSimulateEvent(e.target.checked)}
-                  className="rounded text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
-                />
-                <Calendar size={16} />
-                <span>Major Event Nearby</span>
-              </label>
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center space-x-2 text-sm text-slate-700 font-medium cursor-pointer shrink-0">
+                  <input 
+                    type="checkbox" 
+                    checked={simulateEvent}
+                    onChange={(e) => setSimulateEvent(e.target.checked)}
+                    className="rounded text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                  />
+                  <Calendar size={16} />
+                  <span>Major Event Nearby</span>
+                </label>
+
+                <div className="hidden sm:block h-6 w-px bg-slate-200"></div>
+
+                <label className="flex items-center space-x-2 text-sm text-slate-700 font-medium cursor-pointer shrink-0">
+                  <input 
+                    type="checkbox" 
+                    checked={useLiveWeather}
+                    onChange={(e) => setUseLiveWeather(e.target.checked)}
+                    className="rounded text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                  />
+                  <Sun size={16} />
+                  <span>Live Weather (API)</span>
+                </label>
+              </div>
 
               <div className="hidden sm:block h-6 w-px bg-slate-200"></div>
-
-              <label className="flex items-center space-x-2 text-sm text-slate-700 font-medium cursor-pointer shrink-0">
-                <input 
-                  type="checkbox" 
-                  checked={useLiveWeather}
-                  onChange={(e) => setUseLiveWeather(e.target.checked)}
-                  className="rounded text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
-                />
-                <Sun size={16} />
-                <span>Live Weather (API)</span>
-              </label>
 
               <div className={`flex items-center space-x-2 text-sm text-slate-700 font-medium transition-opacity ${useLiveWeather ? 'opacity-50 pointer-events-none' : ''}`}>
                 <ThermometerSun size={16} />
@@ -441,15 +569,15 @@ export default function Dashboard() {
                   value={temperature} 
                   onChange={(e) => setTemperature(parseInt(e.target.value))}
                   disabled={useLiveWeather}
-                  className="w-24 accent-emerald-500 cursor-pointer"
+                  className="w-24 sm:w-32 lg:w-40 accent-emerald-500 cursor-pointer"
                 />
               </div>
 
-              <div className="flex-1"></div>
+              <div className="flex-1 hidden xl:block"></div>
 
               <button 
                 onClick={fetchBins}
-                className="flex items-center text-sm font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-lg transition-colors shrink-0"
+                className="w-full sm:w-auto flex items-center justify-center text-sm font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-lg transition-colors shrink-0"
               >
                 <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Recalculate
@@ -460,7 +588,7 @@ export default function Dashboard() {
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 shadow-sm flex items-start space-x-4"
+              className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row items-start space-y-4 sm:space-y-0 sm:space-x-4"
             >
               <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl shrink-0">
                 <Sparkles size={24} className={fetchingAi ? "animate-pulse" : ""} />
@@ -472,9 +600,23 @@ export default function Dashboard() {
                   </h3>
                   {fetchingAi && <span className="text-xs font-semibold text-indigo-400 animate-pulse">Generating...</span>}
                 </div>
-                <p className="text-sm font-medium text-indigo-800/80 leading-relaxed">
-                  {aiBriefing}
-                </p>
+                {aiBriefing.includes('API_KEY_INVALID') || aiBriefing.includes('API key not valid') ? (
+                  <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl mt-2">
+                    <p className="text-sm font-semibold text-rose-800">Action Required: Fix Settings</p>
+                    <p className="text-xs text-rose-600 mt-1 mb-2">
+                      It appears you have customized the <strong>GEMINI_API_KEY</strong> in the environment settings (⚙️ gear icon) with your Google Maps API key by mistake.
+                    </p>
+                    <ul className="text-xs text-rose-600 list-disc pl-4 space-y-1 font-medium">
+                      <li>Open the AI Studio Settings (⚙️ gear icon in the top right).</li>
+                      <li>Delete the <strong>GEMINI_API_KEY</strong> row entirely to restore the default AI features.</li>
+                      <li>To enable map routing, add your key to a new row named <strong>GOOGLE_MAPS_PLATFORM_KEY</strong>.</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium text-indigo-800/80 leading-relaxed">
+                    {aiBriefing}
+                  </p>
+                )}
               </div>
             </motion.div>
 
@@ -484,14 +626,14 @@ export default function Dashboard() {
           {activeTab === 'routes' && (
           <div className="max-w-7xl mx-auto space-y-6">
             {/* Map and Route section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[700px]">
+            <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6 h-auto lg:h-[700px]">
               
               {/* Map View */}
               <motion.div 
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.4, duration: 0.5 }}
-                className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative"
+                className="w-full lg:flex-1 lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative h-[60vh] min-h-[400px] lg:min-h-0 lg:h-full block"
               >
                 <div className="absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur-sm px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex items-center space-x-3 pointer-events-none">
                   <div className="flex items-center text-sm font-medium"><div className="w-3 h-3 rounded-full bg-rose-500 mr-2 shadow-sm"></div> Critical</div>
@@ -499,29 +641,25 @@ export default function Dashboard() {
                   <div className="flex items-center text-sm font-medium"><div className="w-3 h-3 rounded-full bg-emerald-500 mr-2 shadow-sm"></div> Normal</div>
                 </div>
 
-                <MapContainer 
-                  center={DEPOT_COORDS} 
-                  zoom={14} 
-                  style={{ height: '100%', width: '100%', zIndex: 10 }}
-                  zoomControl={false}
-                >
+                <MapContainer center={DEPOT_COORDS} zoom={13} className="w-full h-full z-0 font-sans" zoomControl={false}>
                   <TileLayer
-                    url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-                    attribution='&copy; OpenStreetMap &copy; CARTO'
+                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
                   />
+                  {/* Depot Marker */}
+                  <Marker position={DEPOT_COORDS}>
+                    <Popup className="font-sans">
+                      <div className="font-bold text-slate-800">Central Dispatch</div>
+                      <div className="text-xs text-slate-500">Fleet HQ</div>
+                    </Popup>
+                  </Marker>
                   
-                  {bins.length > 0 && routeTargetBins.length > 0 && (
-                    <Polyline 
-                      positions={routeCoordinates} 
-                      pathOptions={{ color: '#0ea5e9', weight: 4, opacity: 0.7, dashArray: fetchingRoute ? '8, 10' : undefined, lineJoin: 'round' }} 
-                    />
-                  )}
-
+                  {/* Bins Markers */}
                   {bins.map(bin => (
                     <Marker 
                       key={bin.id} 
                       position={[bin.lat, bin.lng]}
-                      icon={createCustomIcon(bin.predictedFillLevel, selectedForRoute.has(bin.id))}
+                      icon={createCustomIcon(bin.predictedFillLevel, selectedBin?.id === bin.id || selectedForRoute.has(bin.id))}
                       eventHandlers={{
                         click: () => {
                           if (selectionMode) {
@@ -536,17 +674,16 @@ export default function Dashboard() {
                       }}
                     />
                   ))}
-
-                  {/* Depot Marker */}
-                  <Marker 
-                    position={DEPOT_COORDS}
-                    icon={L.divIcon({
-                      className: 'bg-transparent',
-                      html: '<div class="w-6 h-6 bg-slate-900 rounded-lg flex items-center justify-center border-2 border-white shadow-lg"><div class="w-2 h-2 bg-white rounded-sm"></div></div>',
-                      iconSize: [24,24],
-                      iconAnchor: [12,12]
-                    })}
-                  />
+                  
+                  {/* Route Polyline (if any) */}
+                  {routeCoordinates.length > 0 && (
+                    <Polyline 
+                      positions={routeCoordinates}
+                      color="#10b981"
+                      weight={5}
+                      opacity={0.8}
+                    />
+                  )}
                 </MapContainer>
                 
                 <div className="absolute top-4 right-4 z-[400] flex space-x-2">
@@ -611,7 +748,7 @@ export default function Dashboard() {
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 20 }}
-                      className="absolute top-4 right-4 bottom-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-[500] flex flex-col overflow-hidden"
+                      className="absolute inset-x-4 bottom-4 top-4 sm:top-4 sm:right-4 sm:left-auto sm:bottom-4 sm:w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-[500] flex flex-col overflow-hidden"
                     >
                       <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                         <div className="flex items-center space-x-2">
@@ -716,14 +853,21 @@ export default function Dashboard() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5, duration: 0.5 }}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden"
+                className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden h-[500px] lg:h-full"
               >
                 {isNavigating ? (
                   <>
                     <div className="px-6 py-5 border-b border-indigo-100 flex items-center justify-between bg-indigo-50/80">
-                      <h3 className="font-bold text-indigo-900 text-lg flex items-center">
-                        <Navigation size={20} className="mr-2" /> Live Navigation
-                      </h3>
+                      <div className="flex flex-col">
+                        <h3 className="font-bold text-indigo-900 text-lg flex items-center">
+                          <Navigation size={20} className="mr-2" /> Live Navigation
+                        </h3>
+                        {routingProvider === 'google' && (
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full w-fit mt-1 animate-pulse">
+                            Real-time Traffic Active
+                          </span>
+                        )}
+                      </div>
                       <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold shadow-inner">
                         {routeDetails ? Math.ceil(routeDetails.duration / 60) : 0} mins
                       </div>
@@ -847,7 +991,7 @@ export default function Dashboard() {
             </div>
           </div>
           )}
-          {activeTab === 'fleet' && <FleetView />}
+          {activeTab === 'fleet' && <FleetView drivers={drivers} />}
           {activeTab === 'analytics' && <AnalyticsView />}
           {activeTab === 'settings' && <SettingsView />}
         </main>

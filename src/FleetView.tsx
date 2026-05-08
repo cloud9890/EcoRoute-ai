@@ -2,35 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Truck, User, MapPin, CheckCircle2, Clock, Phone, AlertTriangle, RefreshCw } from 'lucide-react';
 
-export default function FleetView() {
-  const [drivers, setDrivers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastSync, setLastSync] = useState<Date | null>(null);
-
-  const fetchFleetData = async () => {
-    try {
-      const response = await fetch('/api/fleet');
-      if (response.ok) {
-        const data = await response.json();
-        setDrivers(data.drivers);
-        setLastSync(new Date(data.timestamp));
-      }
-    } catch (e) {
-      console.error("Failed to fetch fleet data", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+export default function FleetView({ drivers = [] }: { drivers?: any[] }) {
+  const [loading, setLoading] = useState(false);
+  const [lastSync, setLastSync] = useState<Date | null>(new Date());
+  
+  // Create a local state to allow optimistic updates, updated when props change
+  const [localDrivers, setLocalDrivers] = useState<any[]>(drivers);
 
   useEffect(() => {
-    fetchFleetData();
-    const interval = setInterval(fetchFleetData, 8000); // Poll every 8s
-    return () => clearInterval(interval);
-  }, []);
+    setLocalDrivers(drivers);
+    setLastSync(new Date());
+  }, [drivers]);
 
-  const toggleDriverStatus = (id: string) => {
+  const toggleDriverStatus = async (id: string) => {
     // Optimistic UI update
-    setDrivers(drivers.map(d => {
+    setLocalDrivers(localDrivers.map(d => {
       if (d.id === id) {
          if (d.status === 'active') return { ...d, status: 'break', destination: '-', eta: '-' };
          if (d.status === 'break') return { ...d, status: 'active', destination: 'Assigning...', eta: 'Calculating' };
@@ -41,27 +27,27 @@ export default function FleetView() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Fleet & Driver Management</h2>
-          <div className="flex items-center space-x-2 mt-1">
-            <p className="text-slate-500 font-medium">Real-time tracking powered by External Fleet API.</p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <p className="text-slate-500 font-medium text-sm sm:text-base">Real-time tracking powered by External Fleet API.</p>
             {lastSync && (
-              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full flex items-center">
+              <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full flex items-center whitespace-nowrap">
                 <RefreshCw size={10} className={`mr-1 ${loading ? 'animate-spin' : ''}`} />
                 Last sync: {lastSync.toLocaleTimeString()}
               </span>
             )}
           </div>
         </div>
-        <button className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center">
+        <button className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center justify-center whitespace-nowrap">
           <Truck size={18} className="mr-2" /> Dispatch New Vehicle
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <AnimatePresence>
-          {drivers.map((driver, i) => (
+          {localDrivers.map((driver, i) => (
           <motion.div 
             key={driver.id}
             initial={{ opacity: 0, y: 20 }}

@@ -10,12 +10,12 @@ export default function SettingsView() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex justify-between items-end mb-8">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">System Settings</h2>
           <p className="text-slate-500 font-medium">Manage your account, notifications, and preferences.</p>
         </div>
-        <button className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center">
+        <button className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center justify-center">
           <Save size={18} className="mr-2" /> Save Changes
         </button>
       </div>
@@ -24,25 +24,25 @@ export default function SettingsView() {
         <div className="grid grid-cols-1 md:grid-cols-4">
           
           {/* Settings Sidebar */}
-          <div className="bg-slate-50 border-r border-slate-200 py-6 px-4">
-            <div className="space-y-1">
-              <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg bg-emerald-50 text-emerald-700 font-medium">
+          <div className="bg-slate-50 border-b md:border-b-0 md:border-r border-slate-200 py-4 md:py-6 px-4">
+            <div className="flex md:flex-col space-x-2 md:space-x-0 md:space-y-1 overflow-x-auto no-scrollbar md:overflow-visible">
+              <button className="flex-none md:flex-1 w-auto md:w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg bg-emerald-50 text-emerald-700 font-medium shrink-0">
                 <User size={18} />
                 <span>Profile</span>
               </button>
-              <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors">
+              <button className="flex-none md:flex-1 w-auto md:w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors shrink-0">
                 <Bell size={18} />
                 <span>Notifications</span>
               </button>
-              <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors">
+              <button className="flex-none md:flex-1 w-auto md:w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors shrink-0">
                 <Sliders size={18} />
                 <span>Routing rules</span>
               </button>
-              <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors">
+              <button className="flex-none md:flex-1 w-auto md:w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors shrink-0">
                 <Shield size={18} />
                 <span>Security</span>
               </button>
-              <button className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors">
+              <button className="flex-none md:flex-1 w-auto md:w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-100 font-medium transition-colors shrink-0">
                 <Smartphone size={18} />
                 <span>Integrations</span>
               </button>

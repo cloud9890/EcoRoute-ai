@@ -33,12 +33,12 @@ const COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6'];
 export default function AnalyticsView() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Predictive Analytics</h2>
-          <p className="text-slate-500 font-medium">System-wide performance, ROI, and sustainability metrics.</p>
+          <p className="text-slate-500 font-medium text-sm sm:text-base">System-wide performance, ROI, and sustainability metrics.</p>
         </div>
-        <div className="flex bg-white rounded-lg p-1 border border-slate-200">
+        <div className="flex bg-white rounded-lg p-1 border border-slate-200 self-start sm:self-auto shrink-0">
            <button className="px-4 py-1.5 rounded-md text-sm font-semibold bg-emerald-50 text-emerald-700">7 Days</button>
            <button className="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-500 hover:text-slate-700">30 Days</button>
            <button className="px-4 py-1.5 rounded-md text-sm font-semibold text-slate-500 hover:text-slate-700">All Time</button>
