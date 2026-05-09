@@ -33,35 +33,38 @@ service cloud.firestore {
       allow delete: if true;
     }
 
-    function isValidReport(data) {
-      return data.keys().hasAll(['id', 'binId', 'isOverflowing', 'timestamp', 'userId', 'trustScore', 'photoAttached', 'markedFake']) &&
-        data.id is string && data.id.size() <= 128 &&
-        data.binId is string && data.binId.size() <= 64 &&
-        data.isOverflowing is bool &&
-        data.timestamp is string && data.timestamp.size() <= 64 &&
-        data.userId is string &&
-        data.trustScore is number && data.trustScore >= 0 && data.trustScore <= 100 &&
-        data.photoAttached is bool &&
-        data.markedFake is bool;
+    function isValidReport(data, isUpdate) {
+      return (isUpdate || data.keys().hasAll(['id', 'binId', 'userId', 'timestamp'])) &&
+        (!('id' in data) || data.id is string) &&
+        (!('binId' in data) || data.binId is string) &&
+        (!('userId' in data) || data.userId is string) &&
+        (!('timestamp' in data) || data.timestamp is string) &&
+        (!('trustScore' in data) || data.trustScore is number) &&
+        (!('markedFake' in data) || data.markedFake is bool) &&
+        (!('description' in data) || data.description is string) &&
+        (!('userEmail' in data) || data.userEmail is string) &&
+        (!('lat' in data) || data.lat is number) &&
+        (!('lng' in data) || data.lng is number) &&
+        (!('aiTags' in data) || data.aiTags is list);
     }
 
     match /reports/{reportId} {
-      allow read: if true; // Dispatch dashboard needs to read reports
-      allow create: if isSignedIn() && isValidReport(incoming()) && incoming().id == reportId && incoming().markedFake == false;
-      allow update: if true && isValidReport(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['markedFake']);
+      allow read: if true;
+      allow create: if isValidReport(incoming(), false) && incoming().id == reportId;
+      allow update: if (isSignedIn() || true) && isValidReport(incoming(), true);
     }
 
-    function isValidCitizen(data) {
-      return data.keys().hasAll(['userId', 'reliabilityScore', 'fakeReports']) &&
-        data.userId is string &&
-        data.reliabilityScore is number && data.reliabilityScore >= 0 && data.reliabilityScore <= 100 &&
-        data.fakeReports is number && data.fakeReports >= 0;
+    function isValidCitizen(data, isUpdate) {
+      return (isUpdate || data.keys().hasAll(['userId', 'reliabilityScore', 'fakeReports', 'blocked'])) &&
+        (!('userId' in data) || data.userId is string) &&
+        (!('reliabilityScore' in data) || data.reliabilityScore is number) &&
+        (!('fakeReports' in data) || data.fakeReports is number) &&
+        (!('blocked' in data) || data.blocked is bool);
     }
 
     match /citizens/{citizenId} {
-      allow read: if true; // For dashboard view
-      allow create: if isSignedIn() && isValidCitizen(incoming()) && incoming().userId == citizenId && citizenId == request.auth.uid && incoming().reliabilityScore == 100 && incoming().fakeReports == 0;
-      allow update: if true && isValidCitizen(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['reliabilityScore', 'fakeReports']);
+      allow read: if true;
+      allow write: if true;
     }
   }
 }

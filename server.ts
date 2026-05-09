@@ -12,14 +12,14 @@ async function startServer() {
   app.use(express.json());
 
   // === MOCK DATABASE ===
-  const binsList = [
-    { id: '1', lat: 28.6304, lng: 77.2177, fillLevel: 85, zone: 'Connaught Place', lastUpdated: '2m ago', isPriority: true, isManualPriority: false, baseFillRate: 1.5, type: 'commercial' },
-    { id: '2', lat: 28.6315, lng: 77.2160, fillLevel: 45, zone: 'Connaught Place', lastUpdated: '5m ago', isPriority: false, isManualPriority: false, baseFillRate: 1.2, type: 'commercial' },
-    { id: '3', lat: 28.6290, lng: 77.2190, fillLevel: 20, zone: 'Barakhamba Road', lastUpdated: '10m ago', isPriority: false, isManualPriority: false, baseFillRate: 0.8, type: 'residential' },
-    { id: '4', lat: 28.6285, lng: 77.2150, fillLevel: 92, zone: 'Janpath', lastUpdated: '1m ago', isPriority: true, isManualPriority: false, baseFillRate: 1.8, type: 'commercial' },
-    { id: '5', lat: 28.6330, lng: 77.2190, fillLevel: 78, zone: 'K G Marg', lastUpdated: '12m ago', isPriority: false, isManualPriority: false, baseFillRate: 1.4, type: 'commercial' },
-    { id: '6', lat: 28.6295, lng: 77.2210, fillLevel: 10, zone: 'Tolstoy Marg', lastUpdated: '15m ago', isPriority: false, isManualPriority: false, baseFillRate: 0.5, type: 'residential' },
-    { id: '7', lat: 28.6340, lng: 77.2150, fillLevel: 88, zone: 'Baba Kharak Singh Rd', lastUpdated: 'Just now', isPriority: true, isManualPriority: false, baseFillRate: 1.6, type: 'commercial' },
+  const binsList: any[] = [
+    { id: '1', lat: 28.6304, lng: 77.2177, fillLevel: 85, predictedFillLevel: 85, hasReport: false, reportDetails: null, zone: 'Connaught Place', lastUpdated: '2m ago', isPriority: true, isManualPriority: false, baseFillRate: 1.5, type: 'commercial' },
+    { id: '2', lat: 28.6315, lng: 77.2160, fillLevel: 45, predictedFillLevel: 45, hasReport: false, reportDetails: null, zone: 'Connaught Place', lastUpdated: '5m ago', isPriority: false, isManualPriority: false, baseFillRate: 1.2, type: 'commercial' },
+    { id: '3', lat: 28.6290, lng: 77.2190, fillLevel: 20, predictedFillLevel: 20, hasReport: false, reportDetails: null, zone: 'Barakhamba Road', lastUpdated: '10m ago', isPriority: false, isManualPriority: false, baseFillRate: 0.8, type: 'residential' },
+    { id: '4', lat: 28.6285, lng: 77.2150, fillLevel: 92, predictedFillLevel: 92, hasReport: false, reportDetails: null, zone: 'Janpath', lastUpdated: '1m ago', isPriority: true, isManualPriority: false, baseFillRate: 1.8, type: 'commercial' },
+    { id: '5', lat: 28.6330, lng: 77.2190, fillLevel: 78, predictedFillLevel: 78, hasReport: false, reportDetails: null, zone: 'K G Marg', lastUpdated: '12m ago', isPriority: false, isManualPriority: false, baseFillRate: 1.4, type: 'commercial' },
+    { id: '6', lat: 28.6295, lng: 77.2210, fillLevel: 10, predictedFillLevel: 10, hasReport: false, reportDetails: null, zone: 'Tolstoy Marg', lastUpdated: '15m ago', isPriority: false, isManualPriority: false, baseFillRate: 0.5, type: 'residential' },
+    { id: '7', lat: 28.6340, lng: 77.2150, fillLevel: 88, predictedFillLevel: 88, hasReport: false, reportDetails: null, zone: 'Baba Kharak Singh Rd', lastUpdated: 'Just now', isPriority: true, isManualPriority: false, baseFillRate: 1.6, type: 'commercial' },
   ];
 
   interface UserTrust {
@@ -30,7 +30,18 @@ async function startServer() {
 
   // Import Firebase web SDK instead of admin
   const { initializeApp } = await import('firebase/app');
-  const { getFirestore, collection, doc, getDoc, getDocs, updateDoc, query, where } = await import('firebase/firestore');
+  const { getFirestore, collection, doc, getDoc, getDocs, updateDoc, setDoc, query, where } = await import('firebase/firestore');
+
+  function handleFirestoreError(error: any, operationType: string, path: string | null) {
+    const errInfo = {
+      error: error.message || String(error),
+      operationType,
+      path,
+      timestamp: new Date().toISOString()
+    };
+    console.error('Firestore Server Error: ', JSON.stringify(errInfo));
+    return errInfo;
+  }
   const fs = await import('fs');
   const pathModule = await import('path');
   const configPath = pathModule.join(process.cwd(), 'firebase-applet-config.json');
@@ -110,21 +121,23 @@ async function startServer() {
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         // Speed
-        const speed = 0.002;
-        driver.speed = Math.round(Math.random() * 15 + 35); // mock speed between 35-50 km/h
+        const speed = 0.0001; // Symmetrical speed for 1s updates
+        driver.speed = Math.round(Math.random() * 15 + 35); 
         
-        if (distance < speed) {
+        if (distance < speed * 1.2) {
           driver.lat = target[0];
           driver.lng = target[1];
-          driver.currentRouteIndex += 5; // skip points to move faster visually
+          driver.currentRouteIndex += 1; 
           
           if (driver.currentRouteIndex >= driver.routeCoordinates.length) {
-            // Reached destination
-            driver.status = 'break';
-            driver.destination = 'Completed';
-            driver.routeCoordinates = null;
-            driver.currentRouteIndex = 0;
-            driver.speed = 0;
+            // Reached destination - brief pause then status update
+            setTimeout(() => {
+              driver.status = 'break';
+              driver.destination = 'Completed';
+              driver.routeCoordinates = null;
+              driver.currentRouteIndex = 0;
+              driver.speed = 0;
+            }, 1000);
           }
         } else {
           driver.lat += (dx / distance) * speed;
@@ -136,11 +149,18 @@ async function startServer() {
            const binDx = bin.lat - driver.lat;
            const binDy = bin.lng - driver.lng;
            const binDistance = Math.sqrt(binDx * binDx + binDy * binDy);
-           if (binDistance < 0.003 && bin.fillLevel > 20) {
-             bin.fillLevel = 0;
-             bin.isPriority = false;
-             bin.isManualPriority = false;
-             bin.lastUpdated = 'Just now';
+           // Narrower threshold for clear visual pickup
+           if (binDistance < 0.001) { 
+             if (bin.fillLevel > 0 || bin.predictedFillLevel > 0 || bin.hasReport) {
+               console.log(`Driver ${driver.id} collected Bin #${bin.id}`);
+               bin.fillLevel = 0;
+               bin.predictedFillLevel = 0;
+               bin.isPriority = false;
+               bin.isManualPriority = false;
+               bin.hasReport = false;
+               bin.reportDetails = null;
+               bin.lastUpdated = 'Just now';
+             }
            }
         });
 
@@ -195,7 +215,239 @@ async function startServer() {
     res.json({ success: true, driver });
   });
 
+  // Citizen management
+  app.get("/api/citizens", async (req, res) => {
+    try {
+      const snap = await getDocs(collection(db, 'citizens'));
+      const citizens = snap.docs.map(d => ({ userId: d.id, ...d.data() }));
+      res.json({ citizens });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/citizens/:id/block", async (req, res) => {
+    const userId = req.params.id;
+    const { blocked } = req.body;
+    console.log(`Attempting to ${blocked ? 'block' : 'unblock'} user: ${userId}`);
+    try {
+      const userRef = doc(db, 'citizens', userId);
+      await setDoc(userRef, { blocked: !!blocked }, { merge: true });
+      res.json({ success: true });
+    } catch (e: any) {
+      const errInfo = handleFirestoreError(e, 'write', `citizens/${userId}`);
+      res.status(500).json({ error: errInfo.error });
+    }
+  });
+
+  app.post("/api/citizens/:id/reset-score", async (req, res) => {
+    const userId = req.params.id;
+    console.log(`Attempting to reset score for user: ${userId}`);
+    try {
+      const userRef = doc(db, 'citizens', userId);
+      await setDoc(userRef, { 
+        reliabilityScore: 100, 
+        fakeReports: 0, 
+        blocked: false 
+      }, { merge: true });
+      res.json({ success: true });
+    } catch (e: any) {
+      const errInfo = handleFirestoreError(e, 'write', `citizens/${userId}`);
+      res.status(500).json({ error: errInfo.error });
+    }
+  });
+
+  // Helper for internal routing
+  async function calculateRoute(coords: [number, number][]) {
+    const coordString = coords.map(c => `${c[1]},${c[0]}`).join(';');
+    // ... existing logic ...
+    const gKey = process.env.GOOGLE_MAPS_PLATFORM_KEY;
+
+    if (gKey && gKey !== 'YOUR_API_KEY') {
+      try {
+        const body = {
+          origin: { location: { latLng: { latitude: coords[0][0], longitude: coords[0][1] } } },
+          destination: { location: { latLng: { latitude: coords[coords.length - 1][0], longitude: coords[coords.length - 1][1] } } },
+          intermediates: coords.slice(1, -1).map(c => ({ location: { latLng: { latitude: c[0], longitude: c[1] } } })),
+          travelMode: "DRIVE",
+          routingPreference: "TRAFFIC_AWARE",
+          polylineQuality: "OVERVIEW",
+        };
+
+        const gRes = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': gKey,
+            'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs'
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (gRes.ok) {
+          const gData: any = await gRes.json();
+          if (gData.routes?.[0]) {
+            const route = gData.routes[0];
+            const decodePolyline = (encoded: string) => {
+              const points = [];
+              let index = 0, len = encoded.length;
+              let lat = 0, lng = 0;
+              while (index < len) {
+                let b, shift = 0, result = 0;
+                do {
+                  b = encoded.charCodeAt(index++) - 63;
+                  result |= (b & 0x1f) << shift;
+                  shift += 5;
+                } while (b >= 0x20);
+                const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lat += dlat;
+                shift = 0;
+                result = 0;
+                do {
+                  b = encoded.charCodeAt(index++) - 63;
+                  result |= (b & 0x1f) << shift;
+                  shift += 5;
+                } while (b >= 0x20);
+                const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lng += dlng;
+                points.push([lat / 1e5, lng / 1e5]);
+              }
+              return points;
+            };
+            return {
+              points: decodePolyline(route.polyline.encodedPolyline),
+              duration: parseInt(route.duration.replace('s', '')),
+              distance: route.distanceMeters
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("Internal Google routing failed, falling back to OSRM", err);
+      }
+    }
+
+    try {
+      const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.routes?.[0]) {
+          return {
+            points: data.routes[0].geometry.coordinates.map((c: any) => [c[1], c[0]]),
+            duration: data.routes[0].duration,
+            distance: data.routes[0].distance
+          };
+        }
+      }
+    } catch (e) {
+      console.error("Internal OSRM routing failed", e);
+    }
+    return null;
+  }
+
+  async function calculateOptimizedTrip(coords: [number, number][]) {
+    if (coords.length < 2) return null;
+    const coordString = coords.map(c => `${c[1]},${c[0]}`).join(';');
+    const gKey = process.env.GOOGLE_MAPS_PLATFORM_KEY;
+
+    // We'll use OSRM Trip service primarily for multi-point optimization
+    try {
+      // Trip service automatically finds the most efficient visit order
+      // source=first forces the start at current driver position
+      const response = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordString}?source=first&overview=full&geometries=geojson`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.trips?.[0]) {
+          return {
+            points: data.trips[0].geometry.coordinates.map((c: any) => [c[1], c[0]]),
+            duration: data.trips[0].duration,
+            distance: data.trips[0].distance
+          };
+        }
+      }
+    } catch (e) {
+      console.error("Internal OSRM trip failed", e);
+    }
+    return null;
+  }
+
+  async function autoDispatch(targetBinId: string) {
+    const targetBin = binsList.find(b => b.id === targetBinId);
+    if (!targetBin) return;
+
+    // Mark bin as having an active report
+    targetBin.hasReport = true;
+
+    // Gather all bins that need collection (priority or reported)
+    const pendingBins = binsList.filter(b => b.hasReport || b.isManualPriority || b.fillLevel > 80);
+    
+    // Find nearest driver (excluding off-duty)
+    let bestDriver: any = null;
+    let minDistance = Infinity;
+
+    fleetDrivers.forEach(d => {
+      if (d.status === 'off-duty') return;
+      const dist = Math.sqrt(Math.pow(d.lat - targetBin.lat, 2) + Math.pow(d.lng - targetBin.lng, 2));
+      if (dist < minDistance) {
+        minDistance = dist;
+        bestDriver = d;
+      }
+    });
+    
+    if (bestDriver) {
+      console.log(`Auto-dispatching driver ${bestDriver.id} for multi-point optimized collection.`);
+      
+      // Waypoints: [Driver Pos, ...all pending bins near this driver]
+      // For simplicity, we just take all pending bins if the fleet is small
+      let waypoints: [number, number][] = [[bestDriver.lat, bestDriver.lng]];
+      
+      // Filter bins reasonably close to this driver or just take all pending for now
+      pendingBins.forEach(b => {
+        waypoints.push([b.lat, b.lng]);
+      });
+
+      // Avoid too many waypoints for the free OSRM service
+      if (waypoints.length > 10) waypoints = waypoints.slice(0, 10);
+
+      const route = await calculateOptimizedTrip(waypoints);
+      if (route) {
+        bestDriver.status = 'active';
+        bestDriver.routeCoordinates = route.points;
+        bestDriver.currentRouteIndex = 0;
+        bestDriver.destination = pendingBins.length > 1 ? `Sequential Collection (${pendingBins.length} bins)` : (targetBin.zone || `Bin #${targetBinId}`);
+        bestDriver.eta = `${Math.round(route.duration / 60)} min`;
+      }
+    }
+  }
+
   // API Routes
+  app.post("/api/reports", async (req, res) => {
+    const reportData = req.body;
+    try {
+      const reportRef = doc(db, 'reports', reportData.id);
+      await setDoc(reportRef, reportData);
+      
+      // Update local mock DB for immediate feedback in simulation
+      const bin = binsList.find(b => b.id === reportData.binId);
+      if (bin) {
+        bin.hasReport = true;
+        bin.reportDetails = reportData;
+        bin.needsCollection = true;
+        bin.isManualPriority = true;
+        bin.predictedFillLevel = 100;
+        console.log(`Report received for Bin #${bin.id}. Triggering auto-dispatch.`);
+      }
+
+      // Trigger Auto-Dispatch if not flagged fake
+      if (!reportData.markedFake) {
+        await autoDispatch(reportData.binId);
+      }
+      
+      res.json({ success: true, message: "Report received and auto-dispatched" });
+    } catch (e: any) {
+      const errInfo = handleFirestoreError(e, 'write', `reports/${reportData.id}`);
+      res.status(500).json({ error: errInfo.error });
+    }
+  });
   app.get("/api/config", (req, res) => {
     res.json({
       googleMapsApiKey: process.env.GOOGLE_MAPS_PLATFORM_KEY || ''
@@ -203,15 +455,12 @@ async function startServer() {
   });
 
   app.get("/api/fleet", async (req, res) => {
-    // In a real application, this would call a third-party API like Samsara or Geotab:
-    // const fleetRes = await fetch('https://api.external-fleet.com/v1/vehicles', { headers: { Authorization: ... } });
-    
-    updateFleetMovement();
-    
-    // Add real-time timestamp or delay
-    setTimeout(() => {
+    try {
       res.json({ drivers: fleetDrivers, timestamp: new Date().toISOString() });
-    }, 200); // Simulate network latency
+    } catch (e: any) {
+      console.error("Fleet update failed:", e);
+      res.status(500).json({ error: "Internal fleet simulation error" });
+    }
   });
 
   app.get("/api/health", (req, res) => {
@@ -449,7 +698,7 @@ async function startServer() {
   // Priority Toggle Endpoint
   app.post("/api/bins/:id/collect", (req, res) => {
     const binId = req.params.id;
-    const bin = binsList.find(b => b.id === binId);
+    const bin = binsList.find(b => b.id === binId) as any;
     if (!bin) return res.status(404).json({ error: "Bin not found" });
 
     // Mark collected
@@ -526,6 +775,9 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Start background simulation loop (1.0s interval)
+  setInterval(updateFleetMovement, 1000);
 }
 
 startServer();

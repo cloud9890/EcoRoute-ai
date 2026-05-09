@@ -79,7 +79,7 @@ export default function TrackingView({ drivers = [] }: { drivers: any[] }) {
 
       const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await aiClient.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: prompt,
       });
 

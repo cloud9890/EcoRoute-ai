@@ -53,7 +53,7 @@ export default function DriverPortal() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(fetchData, 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -135,22 +135,22 @@ export default function DriverPortal() {
     if (!driver) return;
     setGeneratingAi(true);
     try {
-      const aiClient = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY });
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const prompt = `
         You are an AI Safety Assistant for a waste collection truck driver. 
         Analyze the driver's current status and provide a 1-sentence safe driving tip or encouragement.
         
         Driver Info:
-        - Name: \${driver.name}
-        - Fatigue Level: \${driver.fatigueLevel}%
-        - Status: \${driver.status}
-        - Truck Fill Level: \${driver.fillLevel}%
+        - Name: ${driver.name}
+        - Fatigue Level: ${driver.fatigueLevel}%
+        - Status: ${driver.status}
+        - Truck Fill Level: ${driver.fillLevel}%
         
         If fatigue > 80%, tell them to take a break safely. Otherwise, provide a concise smart-city route tip.
       `;
 
       const response = await aiClient.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: prompt,
       });
 
@@ -455,8 +455,18 @@ export default function DriverPortal() {
             </Marker>
           )}
 
-          {/* Draw route line to next bin if active */}
-          {driver.status === 'active' && driver.lat && needingCollection.length > 0 && (
+          {/* Draw route path if active */}
+          {driver.status === 'active' && driver.routeCoordinates && driver.routeCoordinates.length > 0 && (
+            <Polyline
+               positions={driver.routeCoordinates}
+               color="#3b82f6"
+               weight={5}
+               opacity={0.8}
+            />
+          )}
+
+          {/* Draw helper dash line to remaining distance if route is missing */}
+          {driver.status === 'active' && !driver.routeCoordinates && driver.lat && needingCollection.length > 0 && (
             <Polyline
                positions={[
                  [driver.lat, driver.lng],

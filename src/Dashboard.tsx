@@ -47,6 +47,7 @@ import AnalyticsView from './AnalyticsView';
 import FleetView from './FleetView';
 import SettingsView from './SettingsView';
 import TrackingView from './TrackingView';
+import CitizensView from './CitizensView';
 
 
 const getTurnIcon = (modifier: string) => {
@@ -263,7 +264,7 @@ export default function Dashboard() {
     const interval = setInterval(() => {
       fetchBins();
       fetchFleet();
-    }, 3000); // refresh every 3s
+    }, 1000); // refresh every 1s
     return () => clearInterval(interval);
   }, [simulateEvent, temperature, useLiveWeather]);
 
@@ -382,7 +383,7 @@ export default function Dashboard() {
 
         const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const response = await aiClient.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3-flash-preview",
           contents: prompt,
         });
 
@@ -454,6 +455,7 @@ export default function Dashboard() {
               { id: 'fleet', icon: Truck, label: 'Fleet & Drivers' },
               { id: 'tracking', icon: Navigation, label: 'Live Tracking' },
               { id: 'analytics', icon: BarChart3, label: 'Predictive Analytics' },
+              { id: 'citizens', icon: Users, label: 'Manage Citizens' },
             ].map((item) => (
               <motion.button
                 whileHover={{ scale: 1.02 }}
@@ -699,6 +701,8 @@ export default function Dashboard() {
 
           </div>
           )}
+
+          {activeTab === 'citizens' && <CitizensView />}
 
           {activeTab === 'routes' && (
           <div className="max-w-7xl mx-auto space-y-6">

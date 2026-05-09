@@ -4,9 +4,9 @@ import { motion } from 'motion/react';
 import { Camera, AlertTriangle, Send, MapPin, CheckCircle, ShieldAlert, LogIn, Trash2, CheckCircle2, Sparkles, Loader2, Navigation, Users } from 'lucide-react';
 import { auth, db } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, doc, setDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import ReactDOMServer from 'react-dom/server';
 
@@ -53,24 +53,12 @@ export default function CitizenReport() {
   const [fleet, setFleet] = useState<any[]>([]);
   const [myTrustScore, setMyTrustScore] = useState<number | null>(null);
   const [myFakeReports, setMyFakeReports] = useState<number>(0);
+  const [isBlocked, setIsBlocked] = useState<boolean>(false);
   const [pastReports, setPastReports] = useState<any[]>([]);
 
   // Geolocation & Photo
   const [photoBase64, setPhotoBase64] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{lat: number, lng: number} | null>(null);
-
-  const fetchPastReports = async (uid: string) => {
-    try {
-      const q = query(collection(db, 'reports'), where('userId', '==', uid));
-      const snapshot = await getDocs(q);
-      const reports = snapshot.docs.map(d => d.data());
-      // Sort by descending timestamp locally
-      reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setPastReports(reports);
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   const fetchMapData = () => {
     fetch("/api/bins")
@@ -86,32 +74,47 @@ export default function CitizenReport() {
 
   useEffect(() => {
     fetchMapData();
-    const interval = setInterval(fetchMapData, 3000);
+    const interval = setInterval(fetchMapData, 1000);
 
+    let citizenUnsubscribe: () => void;
+    let reportsUnsubscribe: () => void;
     const unsubscribe = onAuthStateChanged(auth, async (userObj) => {
       setUser(userObj);
+      if (citizenUnsubscribe) citizenUnsubscribe();
+      if (reportsUnsubscribe) reportsUnsubscribe();
+      
       if (userObj) {
         try {
-          const citizensRef = collection(db, 'citizens');
-          const q = query(citizensRef, where('userId', '==', userObj.uid));
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            const data = snapshot.docs[0].data();
-            setMyTrustScore(data.reliabilityScore);
-            setMyFakeReports(data.fakeReports || 0);
-          } else {
-            const myCitizenRef = doc(collection(db, 'citizens'), userObj.uid);
-            await setDoc(myCitizenRef, {
-              userId: userObj.uid,
-              reliabilityScore: 100,
-              fakeReports: 0
-            });
-            setMyTrustScore(100);
-            setMyFakeReports(0);
-          }
-          await fetchPastReports(userObj.uid);
+          const myCitizenRef = doc(collection(db, 'citizens'), userObj.uid);
+          citizenUnsubscribe = onSnapshot(myCitizenRef, async (snapshot) => {
+            if (snapshot.exists()) {
+              const data = snapshot.data();
+              setMyTrustScore(data.reliabilityScore);
+              setMyFakeReports(data.fakeReports || 0);
+              setIsBlocked(!!data.blocked);
+            } else {
+              await setDoc(myCitizenRef, {
+                userId: userObj.uid,
+                reliabilityScore: 100,
+                fakeReports: 0,
+                blocked: false
+              });
+              setMyTrustScore(100);
+              setMyFakeReports(0);
+              setIsBlocked(false);
+            }
+          });
+
+          // Real-time listener for reports
+          const q = query(collection(db, 'reports'), where('userId', '==', userObj.uid));
+          reportsUnsubscribe = onSnapshot(q, (snapshot) => {
+            const reports = snapshot.docs.map(d => d.data());
+            // Sort by descending timestamp locally
+            reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            setPastReports(reports);
+          });
         } catch (e) {
-          console.error("Failed to fetch/create citizen profile", e);
+          console.error("Failed to set up listeners", e);
         }
       }
       setLoadingConfig(false);
@@ -120,6 +123,8 @@ export default function CitizenReport() {
     return () => {
       clearInterval(interval);
       unsubscribe();
+      if (citizenUnsubscribe) citizenUnsubscribe();
+      if (reportsUnsubscribe) reportsUnsubscribe();
     };
   }, []);
 
@@ -127,11 +132,11 @@ export default function CitizenReport() {
     if (!description || description.trim().length < 5) return;
     setAnalyzingText(true);
     try {
-      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const prompt = `Classify this waste/trash issue description into 1 to 3 very short tags (e.g. Hazardous, Bad Odor, Overflowing, Damaged Bin). Output a comma-separated list only. Describe: "${description}"`;
       
       const response = await aiClient.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: prompt,
       });
 
@@ -182,6 +187,8 @@ export default function CitizenReport() {
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return alert("Please log in first");
+    if (isBlocked) return alert("Your account has been blocked from submitting reports.");
+    if (myTrustScore !== null && myTrustScore < 20) return alert("Your account has been banned from submitting reports due to a low reliability score.");
     if (myFakeReports >= 3) return alert("Your account has been banned from submitting reports due to multiple fake submissions.");
     if (!selectedBin) return alert("Please select a bin");
 
@@ -195,8 +202,8 @@ export default function CitizenReport() {
         const binInfo = bins.find(b => b.id === selectedBin);
         const pastFlagged = pastReports.filter(r => r.markedFake).length;
         
-        const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const prompt = `
+        const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      let promptText = `
           Act as a Smart City AI Verification System.
           Determine if the following citizen waste report is likely FAKE or SPAM.
           
@@ -222,7 +229,7 @@ export default function CitizenReport() {
           }
         `;
 
-        const parts: any[] = [{ text: prompt }];
+        const parts: any[] = [{ text: promptText }];
 
         if (photoBase64) {
           const match = photoBase64.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
@@ -233,13 +240,13 @@ export default function CitizenReport() {
                 mimeType: match[1]
               }
             });
-            prompt += "\n\n- Analyze the attached image as well to verify if there is actually waste or an issue present.";
-            parts[0] = { text: prompt };
+            promptText += "\n\n- Analyze the attached image as well to verify if there is actually waste or an issue present.";
+            parts[0] = { text: promptText };
           }
         }
 
         const response = await aiClient.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3-flash-preview",
           contents: [{ role: "user", parts }],
         });
 
@@ -264,12 +271,18 @@ export default function CitizenReport() {
         trustScore: myTrustScore ?? 100,
         photoAttached: photoMock,
         photoData: photoBase64,
-        reportedLocation: userLocation,
+        reportedLocation: userLocation || { lat: 0, lng: 0 },
         markedFake: isFlaggedAsFake,
         verificationReason: fraudReason
       };
 
-      await setDoc(doc(db, 'reports', genId), newReportRef);
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newReportRef)
+      });
+
+      if (!res.ok) throw new Error("Failed to submit report to server");
 
       if (isFlaggedAsFake) {
         // Increment fake reports for user
@@ -286,7 +299,6 @@ export default function CitizenReport() {
         isFake: isFlaggedAsFake,
         reason: fraudReason
       });
-      fetchPastReports(user.uid);
       setSubmitted(true);
     } catch (e: any) {
       console.error("Error submitting report", e);
@@ -487,13 +499,24 @@ export default function CitizenReport() {
             </Marker>
           ))}
           {fleet.map((truck) => (
-            <Marker key={truck.id} position={[truck.lat, truck.lng]} icon={truckIcon}>
-              <Popup className="font-sans">
-                <div className="font-bold text-indigo-900 text-sm mb-1">{truck.truck}</div>
-                <div className="text-xs text-slate-500 mb-1">Driver: {truck.name}</div>
-                <div className="text-xs font-bold text-emerald-600">Status: {truck.status}</div>
-              </Popup>
-            </Marker>
+            <React.Fragment key={truck.id}>
+              <Marker position={[truck.lat, truck.lng]} icon={truckIcon}>
+                <Popup className="font-sans">
+                  <div className="font-bold text-indigo-900 text-sm mb-1">{truck.truck}</div>
+                  <div className="text-xs text-slate-500 mb-1">Driver: {truck.name}</div>
+                  <div className="text-xs font-bold text-emerald-600">Status: {truck.status}</div>
+                </Popup>
+              </Marker>
+              {truck.status === 'active' && truck.routeCoordinates && (
+                <Polyline 
+                  positions={truck.routeCoordinates} 
+                  color="#6366f1" 
+                  weight={3} 
+                  opacity={0.6} 
+                  dashArray="5, 10" 
+                />
+              )}
+            </React.Fragment>
           ))}
         </MapContainer>
         
