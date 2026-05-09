@@ -241,6 +241,8 @@ export default function Dashboard() {
         body: JSON.stringify({
           driverId: selectedDriverId,
           routeCoordinates: routeCoordinates,
+          navigationSteps: navigationSteps,
+          routeDetails: routeDetails,
           destinationName: `Route (${routeTargetBins.length} bins)`
         })
       });
@@ -936,57 +938,42 @@ export default function Dashboard() {
               >
                 {isNavigating ? (
                   <>
-                    <div className="px-6 py-5 border-b border-indigo-100 flex items-center justify-between bg-indigo-50/80">
-                      <div className="flex flex-col">
-                        <h3 className="font-bold text-indigo-900 text-lg flex items-center">
-                          <Navigation size={20} className="mr-2" /> Live Navigation
-                        </h3>
-                        {routingProvider === 'google' && (
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full w-fit mt-1 animate-pulse">
-                            Real-time Traffic Active
-                          </span>
-                        )}
+                    <div className="px-6 py-5 border-b border-indigo-100 flex flex-col bg-indigo-50/80">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <h3 className="font-bold text-indigo-900 text-lg flex items-center">
+                            <Navigation size={20} className="mr-2" /> Route Calculated
+                          </h3>
+                          {routingProvider === 'google' && (
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full w-fit mt-1 animate-pulse">
+                              Real-time Traffic Active
+                            </span>
+                          )}
+                        </div>
+                        <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold shadow-inner">
+                          {routeDetails ? Math.ceil(routeDetails.duration / 60) : 0} mins
+                        </div>
                       </div>
-                      <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold shadow-inner">
-                        {routeDetails ? Math.ceil(routeDetails.duration / 60) : 0} mins
-                      </div>
+                      <p className="text-sm mt-3 text-indigo-800">
+                        Turn-by-turn navigation has been forwarded to the Driver Portal. Complete the dispatch to assign this route to a truck.
+                      </p>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                      {navigationSteps.length === 0 ? (
-                        <div className="text-center text-slate-400 py-8 text-sm">No navigation data available.</div>
-                      ) : (
-                        navigationSteps.map((step, idx) => (
-                          <motion.div 
-                            key={idx}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.05 }}
-                            className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-start shadow-sm"
-                          >
-                            <div className="bg-indigo-100 p-2 rounded-lg shrink-0 mt-0.5">
-                              {step.maneuver.type === 'arrive' ? (
-                                <Check size={20} className="text-emerald-600" />
-                              ) : (
-                                getTurnIcon(step.maneuver.modifier)
-                              )}
-                            </div>
-                            <div className="ml-4">
-                              <p className="font-bold text-slate-800 text-sm">
-                                {step.maneuver.type === 'depart' && 'Depart'}
-                                {step.maneuver.type === 'turn' && 'Turn'}
-                                {step.maneuver.type === 'continue' && 'Continue'}
-                                {step.maneuver.type === 'new name' && 'Continue'}
-                                {step.maneuver.type === 'arrive' && 'Arrive'}
-                                {step.maneuver.modifier ? ` ${step.maneuver.modifier}` : ''}
-                                {step.name ? ` onto ${step.name}` : ''}
-                              </p>
-                              {step.distance > 0 && (
-                                <p className="text-xs text-slate-500 font-medium mt-1">In {step.distance >= 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m'}</p>
-                              )}
-                            </div>
-                          </motion.div>
-                        ))
-                      )}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                      <h4 className="font-bold text-slate-700">Target Bins in Route:</h4>
+                      <div className="space-y-2">
+                        {routeTargetBins.map((bin, idx) => (
+                           <div key={idx} className="bg-slate-50 border border-slate-100 p-3 rounded-lg flex items-center justify-between">
+                              <div className="flex items-center space-x-3">
+                                <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-xs">{idx + 1}</div>
+                                <div>
+                                  <div className="font-bold text-sm text-slate-800">Bin #{bin.id}</div>
+                                  <div className="text-xs text-slate-500">{bin.zone}</div>
+                                </div>
+                              </div>
+                              <div className="font-bold text-sm text-slate-600">{bin.fillLevel}%</div>
+                           </div>
+                        ))}
+                      </div>
                     </div>
                   </>
                 ) : (

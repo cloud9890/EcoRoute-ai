@@ -19,6 +19,16 @@ const defaultIcon = L.divIcon({
   iconAnchor: [12, 12],
 });
 
+const truckIcon = L.divIcon({
+  html: `<div style="background-color: #6366f1; width: 32px; height: 32px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; color: white;">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M20 17h2v-9h-5V5h-7"/><path d="M15.5 17a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M5.5 17a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
+         </div>`,
+  className: '',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+  popupAnchor: [0, -16]
+});
+
 export default function CitizenReport() {
   const [searchParams] = useSearchParams();
   const initialBinId = searchParams.get('binId') || '';
@@ -40,6 +50,7 @@ export default function CitizenReport() {
 
   // Data
   const [bins, setBins] = useState<any[]>([]);
+  const [fleet, setFleet] = useState<any[]>([]);
   const [myTrustScore, setMyTrustScore] = useState<number | null>(null);
   const [myFakeReports, setMyFakeReports] = useState<number>(0);
   const [pastReports, setPastReports] = useState<any[]>([]);
@@ -61,13 +72,21 @@ export default function CitizenReport() {
     }
   };
 
-  useEffect(() => {
+  const fetchMapData = () => {
     fetch("/api/bins")
       .then(res => res.json())
-      .then(data => {
-        setBins(data.bins || []);
-      })
+      .then(data => setBins(data.bins || []))
       .catch(console.error);
+      
+    fetch("/api/fleet")
+      .then(res => res.json())
+      .then(data => setFleet(data.drivers || []))
+      .catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchMapData();
+    const interval = setInterval(fetchMapData, 3000);
 
     const unsubscribe = onAuthStateChanged(auth, async (userObj) => {
       setUser(userObj);
@@ -98,7 +117,10 @@ export default function CitizenReport() {
       setLoadingConfig(false);
     });
 
-    return unsubscribe;
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, []);
 
   const handleAiClassify = async () => {
@@ -461,6 +483,15 @@ export default function CitizenReport() {
                 <div className="font-bold text-slate-800 text-sm mb-1">Bin #{bin.id}</div>
                 <div className="text-xs text-slate-500 mb-2">{bin.zone}</div>
                 <button onClick={() => setSelectedBin(bin.id)} className="w-full bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-bold py-1.5 rounded transition-colors">Select for Report</button>
+              </Popup>
+            </Marker>
+          ))}
+          {fleet.map((truck) => (
+            <Marker key={truck.id} position={[truck.lat, truck.lng]} icon={truckIcon}>
+              <Popup className="font-sans">
+                <div className="font-bold text-indigo-900 text-sm mb-1">{truck.truck}</div>
+                <div className="text-xs text-slate-500 mb-1">Driver: {truck.name}</div>
+                <div className="text-xs font-bold text-emerald-600">Status: {truck.status}</div>
               </Popup>
             </Marker>
           ))}

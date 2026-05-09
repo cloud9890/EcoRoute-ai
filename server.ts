@@ -131,6 +131,19 @@ async function startServer() {
           driver.lng += (dy / distance) * speed;
         }
 
+        // Auto collect bin if close enough
+        binsList.forEach(bin => {
+           const binDx = bin.lat - driver.lat;
+           const binDy = bin.lng - driver.lng;
+           const binDistance = Math.sqrt(binDx * binDx + binDy * binDy);
+           if (binDistance < 0.003 && bin.fillLevel > 20) {
+             bin.fillLevel = 0;
+             bin.isPriority = false;
+             bin.isManualPriority = false;
+             bin.lastUpdated = 'Just now';
+           }
+        });
+
         driver.fillLevel = Math.max(0, Math.min(100, Math.floor(driver.fillLevel + (Math.random() * 2))));
       } else if (driver.status === 'active') {
          // Random fallback (stationary or tiny movements)
@@ -144,12 +157,14 @@ async function startServer() {
   }
 
   app.post("/api/dispatch", (req, res) => {
-    const { driverId, routeCoordinates, destinationName } = req.body;
+    const { driverId, routeCoordinates, destinationName, navigationSteps, routeDetails } = req.body;
     const driver = fleetDrivers.find(d => d.id === driverId);
     if (!driver) return res.status(404).json({ error: "Driver not found" });
 
     driver.status = 'active';
     driver.routeCoordinates = routeCoordinates;
+    if (navigationSteps) driver.navigationSteps = navigationSteps;
+    if (routeDetails) driver.routeDetails = routeDetails;
     driver.currentRouteIndex = 0;
     driver.destination = destinationName || 'Assigned Route';
     

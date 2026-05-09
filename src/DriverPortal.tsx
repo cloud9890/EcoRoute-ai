@@ -1,9 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Truck, Navigation, AlertTriangle, Coffee, MapPin, CheckCircle2, Clock, Battery, Loader2, Sparkles, Navigation2 } from 'lucide-react';
+import { Truck, Navigation, AlertTriangle, Coffee, MapPin, CheckCircle2, Clock, Battery, Loader2, Sparkles, Navigation2, ArrowLeft, ArrowRight, ArrowUp, ArrowUpLeft, ArrowUpRight, CircleDot, Check } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
+
+const getTurnIcon = (modifier: string) => {
+  switch (modifier) {
+    case 'left': return <ArrowLeft size={20} className="text-indigo-600" />;
+    case 'right': return <ArrowRight size={20} className="text-indigo-600" />;
+    case 'straight': return <ArrowUp size={20} className="text-indigo-600" />;
+    case 'slight left': return <ArrowUpLeft size={20} className="text-indigo-600" />;
+    case 'slight right': return <ArrowUpRight size={20} className="text-indigo-600" />;
+    case 'sharp left': return <ArrowLeft size={20} className="text-indigo-600" />;
+    case 'sharp right': return <ArrowRight size={20} className="text-indigo-600" />;
+    case 'uturn': return <ArrowUp size={20} className="text-indigo-600 rotate-180" />;
+    default: return <CircleDot size={20} className="text-indigo-600" />;
+  }
+};
 
 const depotIcon = L.divIcon({
   html: `<div style="background-color: #f43f5e; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.4);"></div>`,
@@ -332,8 +346,41 @@ export default function DriverPortal() {
                 </div>
               </div>
 
-              {/* Upcoming Route */}
-              {needingCollection.length > 1 && (
+              {/* Upcoming Route & Navigation */}
+              {driver.navigationSteps && driver.navigationSteps.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden max-h-[400px]">
+                  <div className="px-5 py-4 border-b border-indigo-100 flex items-center justify-between bg-indigo-50/80">
+                    <h3 className="font-bold text-indigo-900 flex items-center">
+                      <Navigation size={18} className="mr-2" /> Live Navigation
+                    </h3>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {driver.navigationSteps.map((step: any, idx: number) => (
+                      <div key={idx} className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-start shadow-sm">
+                        <div className="bg-indigo-100 p-2 rounded-lg shrink-0 mt-0.5">
+                          {step.maneuver.type === 'arrive' ? <Check size={20} className="text-emerald-600" /> : getTurnIcon(step.maneuver.modifier)}
+                        </div>
+                        <div className="ml-4">
+                          <p className="font-bold text-slate-800 text-sm">
+                            {step.maneuver.type === 'depart' && 'Depart'}
+                            {step.maneuver.type === 'turn' && 'Turn'}
+                            {step.maneuver.type === 'continue' && 'Continue'}
+                            {step.maneuver.type === 'new name' && 'Continue'}
+                            {step.maneuver.type === 'arrive' && 'Arrive'}
+                            {step.maneuver.modifier ? ` ${step.maneuver.modifier}` : ''}
+                            {step.name ? ` onto ${step.name}` : ''}
+                          </p>
+                          {step.distance > 0 && (
+                            <p className="text-xs text-slate-500 font-medium mt-1">In {step.distance >= 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m'}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!driver.navigationSteps && needingCollection.length > 1 && (
                 <div>
                   <h3 className="font-bold text-slate-800 text-sm tracking-tight mb-3 pl-1 uppercase">Upcoming Route Queue</h3>
                   <div className="space-y-2">
