@@ -47,10 +47,10 @@ export default function AnalyticsView() {
         Complaints: \${JSON.stringify(complaintData)}
       `;
 
-      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-flash-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
       setAiInsight(response.text || "Insight generation failed.");

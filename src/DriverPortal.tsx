@@ -53,7 +53,7 @@ export default function DriverPortal() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 1000);
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -150,8 +150,8 @@ export default function DriverPortal() {
       `;
 
       const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-flash-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
       setAiTip(response.text || "Drive safely.");

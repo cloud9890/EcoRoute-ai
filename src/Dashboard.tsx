@@ -264,7 +264,7 @@ export default function Dashboard() {
     const interval = setInterval(() => {
       fetchBins();
       fetchFleet();
-    }, 1000); // refresh every 1s
+    }, 5000); // refresh every 5s instead of 1s
     return () => clearInterval(interval);
   }, [simulateEvent, temperature, useLiveWeather]);
 
@@ -381,10 +381,10 @@ export default function Dashboard() {
           Active citizen reports: ${binsContext.hasReports ? 'Yes' : 'No'}
         `;
 
-        const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
         const response = await aiClient.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: prompt,
+          model: "gemini-flash-latest",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
 
         if (response.text) {

@@ -77,10 +77,10 @@ export default function TrackingView({ drivers = [] }: { drivers: any[] }) {
         Drivers: \${JSON.stringify(activeDrivers.map(d => ({ name: d.name, speed: d.speed, dest: d.destination, eta: d.eta })))}
       `;
 
-      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-flash-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
       setAiTrafficInsight(response.text || "Insight generation failed.");

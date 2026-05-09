@@ -54,10 +54,10 @@ export default function FleetView({ drivers = [], onUpdate }: { drivers?: any[],
         Drivers: \${JSON.stringify(localDrivers.map(d => ({ name: d.name, fatigue: d.fatigueLevel, status: d.status, idle: d.idleTime })))}
       `;
 
-      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-flash-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
       setAiCoachInsight(response.text || "Insight generation failed.");

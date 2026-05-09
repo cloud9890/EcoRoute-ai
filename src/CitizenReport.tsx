@@ -59,6 +59,59 @@ export default function CitizenReport() {
   // Geolocation & Photo
   const [photoBase64, setPhotoBase64] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+
+  const startCamera = async () => {
+    setIsCameraActive(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' },
+        audio: false 
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Camera error:", err);
+      alert("Could not access camera. Please check permissions.");
+      setIsCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraActive(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg');
+        setPhotoBase64(dataUrl);
+        setPhotoMock(true);
+        stopCamera();
+        
+        // Get location
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition((pos) => {
+            setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          }, (err) => console.warn(err));
+        }
+      }
+    }
+  };
 
   const fetchMapData = () => {
     fetch("/api/bins")
@@ -74,7 +127,7 @@ export default function CitizenReport() {
 
   useEffect(() => {
     fetchMapData();
-    const interval = setInterval(fetchMapData, 1000);
+    const interval = setInterval(fetchMapData, 5000);
 
     let citizenUnsubscribe: () => void;
     let reportsUnsubscribe: () => void;
@@ -136,13 +189,13 @@ export default function CitizenReport() {
       const prompt = `Classify this waste/trash issue description into 1 to 3 very short tags (e.g. Hazardous, Bad Odor, Overflowing, Damaged Bin). Output a comma-separated list only. Describe: "${description}"`;
       
       const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-flash-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
       const tagsRaw = response.text || "";
       const parsedTags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-      setAiTags(parsedTags);
+      setAiTags(parsedTags.slice(0, 3));
     } catch (error) {
       console.error(error);
     }
@@ -161,27 +214,6 @@ export default function CitizenReport() {
 
   const handleLogout = () => {
     signOut(auth);
-  };
-
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPhotoBase64(reader.result as string);
-      setPhotoMock(true); // for legacy logic
-    };
-    reader.readAsDataURL(file);
-
-    // Get location when photo is attached
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      }, (err) => {
-        console.warn("Geolocation failed", err);
-      });
-    }
   };
 
   const handleSubmitReport = async (e: React.FormEvent) => {
@@ -203,29 +235,39 @@ export default function CitizenReport() {
         const pastFlagged = pastReports.filter(r => r.markedFake).length;
         
         const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      let promptText = `
-          Act as a Smart City AI Verification System.
-          Determine if the following citizen waste report is likely FAKE or SPAM.
+        
+        let promptText = `
+          SYSTEM ROLE: EXTREME SKEPTICISM SMART CITY WASTE AUDITOR (ID: BLACK-GATE-01)
           
-          Report Details:
-          - Description: "${description}"
-          - AI Tags: [${aiTags.join(', ')}]
-          - Evidence Attached: ${photoMock ? 'Yes' : 'No'}
-          - Location: ${binInfo?.zone} (Bin #${selectedBin})
+          TASK: You are a cold, clinical, and suspicious robotic auditor. Your SOLE PURPOSE is to detect fraudulent or invalid waste reports. 
+          You MUST reject any image that does not show explicit, tangible evidence of trash, litter, or overflowing bins.
           
-          User Context:
-          - Trust Score: ${myTrustScore ?? 100}/100
-          - Past Fake Reports: ${pastFlagged}
+          REPORT CONTEXT:
+          - User Claim: "${description}"
+          - Tags: [${aiTags.join(', ')}]
+          - User Trust Score: ${myTrustScore ?? 100}
           
-          Rules for flagging:
-          - If there's no evidence AND the description is nonsense ("asdf", "test", "spam"), FLAG IT.
-          - If the user has a Trust Score < 50, scrutinize heavily.
-          - If there are past fake reports and evidence is missing, FLAG IT.
+          ZERO TOLERANCE POLICY (STRICT REJECTION CRITERIA):
+          1. PEOPLE/SELFIES: If the image contains a human face, a selfie, or people, it is INSTANTLY FAKE. Mark isFake: true. (Reason: "Privacy Violation or Person as Subject")
+          2. CLEAN ENVIRONMENTS: If the street, room, or area looks clean or shows only typical urban decor without visible trash, mark isFake: true.
+          3. IRRELEVANT SUBJECTS: Photos of pets, food (unless it's garbage), cars, or generic buildings with no waste are FAKE.
+          4. SPOOFING: Detecting if a photo was taken of a screen, or if it's a stock photo. 
+          5. MISMATCH: If the user says "Overflowing" but the bin is empty or clean, it is FAKE.
+
+          IMAGE AUDIT PROTOCOL:
+          - Step 1: Scan for humans. If human detected -> isFake: true.
+          - Step 2: Scan for specific waste items (bags, bottles, sludge, debris). If none -> isFake: true.
+          - Step 3: Compare claim vs. visual reality.
           
-          Respond ONLY with a JSON object format:
+          ${(myTrustScore ?? 100) < 60 ? "HIGH ALERT: This user has a history of invalid reports. Apply MAXIMUM SKEPTICISM." : ""}
+          
+          OUTPUT FORMAT (STRICT JSON ONLY):
           {
             "isFake": boolean,
-            "reason": "String explaining the verification outcome in 1 sentence"
+            "confidence": number (0-1),
+            "detectedObjects": string[],
+            "personCount": number,
+            "reason": "Short, clinical justification for the verdict."
           }
         `;
 
@@ -240,21 +282,33 @@ export default function CitizenReport() {
                 mimeType: match[1]
               }
             });
-            promptText += "\n\n- Analyze the attached image as well to verify if there is actually waste or an issue present.";
+            promptText += "\n\nCRITICAL FINAL CHECK: Count any people or faces. If personCount > 0, you MUST return isFake: true. High confidence is required for genuine reports.";
             parts[0] = { text: promptText };
           }
         }
 
         const response = await aiClient.models.generateContent({
-          model: "gemini-3-flash-preview",
+          model: "gemini-flash-latest",
           contents: [{ role: "user", parts }],
         });
 
-        const rawJson = response.text?.replace(/```json/g, "").replace(/```/g, "").trim() || "{}";
+        const responseText = response.text || "";
+
+        const rawJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim() || "{}";
         const parsed = JSON.parse(rawJson);
         if (parsed && typeof parsed.isFake === "boolean") {
           isFlaggedAsFake = parsed.isFake;
-          fraudReason = parsed.reason || (parsed.isFake ? "Automatically flagged by AI" : "AI Verified");
+          fraudReason = parsed.reason || (parsed.isFake ? "Flagged by AI Inspection" : "AI Verified");
+          
+          // Secondary local heuristic check
+          const objects = (parsed.detectedObjects || []).map((o: string) => o.toLowerCase());
+          const hasPersonHeuristic = objects.some((o: string) => o.includes('person') || o.includes('human') || o.includes('face') || o.includes('selfie') || o.includes('man') || o.includes('woman'));
+          const personCount = parsed.personCount || 0;
+
+          if ((hasPersonHeuristic || personCount > 0) && !isFlaggedAsFake) {
+            isFlaggedAsFake = true;
+            fraudReason = `REJECTED: Image contains evidence of ${personCount > 0 ? personCount + ' person(s)' : 'people'}. Reports must only show waste.`;
+          }
         }
       } catch (aiError) {
         console.warn("AI Fake Detection skipped due to error:", aiError);
@@ -286,13 +340,20 @@ export default function CitizenReport() {
 
       if (isFlaggedAsFake) {
         // Increment fake reports for user
-        const newFakeCount = myFakeReports + 1;
+        const newFakeCount = (myFakeReports || 0) + 1;
+        // Exponential penalty: 20, 40, 80...
+        const penalty = Math.min(100, 20 * Math.pow(2, newFakeCount - 1));
+        const newScore = Math.max(0, (myTrustScore || 100) - penalty);
+        
         await setDoc(doc(db, 'citizens', user.uid), {
           fakeReports: newFakeCount,
-          reliabilityScore: Math.max(0, (myTrustScore || 100) - 20)
+          reliabilityScore: newScore,
+          blocked: newScore < 20 || newFakeCount >= 3
         }, { merge: true });
+        
         setMyFakeReports(newFakeCount);
-        setMyTrustScore(Math.max(0, (myTrustScore || 100) - 20));
+        setMyTrustScore(newScore);
+        if (newScore < 20 || newFakeCount >= 3) setIsBlocked(true);
       }
 
       setLastReportVerification({
@@ -424,10 +485,57 @@ export default function CitizenReport() {
 
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Evidence</label>
-                      <label className={`w-full py-3 border-2 border-dashed rounded-xl flex items-center justify-center cursor-pointer transition-colors text-sm font-semibold ${photoMock ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-500 hover:bg-slate-100'}`}>
-                        <Camera size={16} className="mr-2" /> {photoMock ? 'Photo Attached (Click to change)' : 'Take or Upload Photo'}
-                        <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
-                      </label>
+                      <button 
+                        type="button"
+                        onClick={startCamera} 
+                        className={`w-full py-3 border-2 border-dashed rounded-xl flex items-center justify-center cursor-pointer transition-colors text-sm font-semibold ${photoMock ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-500 hover:bg-slate-100'}`}
+                      >
+                        <Camera size={16} className="mr-2" /> {photoMock ? 'Photo Attached (Click to retake)' : 'Take Picture'}
+                      </button>
+                      {photoBase64 && (
+                        <div className="mt-2 relative rounded-lg overflow-hidden border border-slate-200 aspect-video">
+                          <img src={photoBase64} alt="Evidence" className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                      
+                      {/* Custom Camera UI Overlay */}
+                      {isCameraActive && (
+                        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-4">
+                          <div className="relative w-full max-w-md aspect-[3/4] bg-slate-900 rounded-3xl overflow-hidden shadow-2xl flex items-center justify-center">
+                            <video 
+                              ref={videoRef} 
+                              autoPlay 
+                              playsInline 
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 border-[2px] border-white/20 pointer-events-none m-8 rounded-2xl flex items-center justify-center">
+                               <div className="w-full h-[1px] bg-white/10"></div>
+                               <div className="absolute h-full w-[1px] bg-white/10"></div>
+                            </div>
+                            
+                            <div className="absolute bottom-6 left-0 right-0 flex justify-center items-center space-x-12">
+                              <button 
+                                type="button"
+                                onClick={stopCamera} 
+                                className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center text-white"
+                              >
+                                <span className="text-xl">×</span>
+                              </button>
+                              <button 
+                                type="button"
+                                onClick={capturePhoto} 
+                                className="w-20 h-20 rounded-full border-4 border-white bg-white/20 backdrop-blur-sm flex items-center justify-center transition-transform active:scale-90"
+                              >
+                                <div className="w-16 h-16 rounded-full bg-white"></div>
+                              </button>
+                              <div className="w-12"></div> {/* Spacer */}
+                            </div>
+                          </div>
+                          <canvas ref={canvasRef} className="hidden" />
+                          <p className="text-white/60 text-xs mt-6 font-medium text-center max-w-[200px]">Align the waste issue inside the grill for AI verification.</p>
+                        </div>
+                      )}
+
                       {userLocation && (
                         <p className="text-[10px] text-slate-500 mt-1 flex items-center">
                           <MapPin size={10} className="mr-1" /> Location captured from photo: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}

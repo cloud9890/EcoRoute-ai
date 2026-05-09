@@ -11,6 +11,12 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Log all requests to help debug fetch issues
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+
   // === MOCK DATABASE ===
   const binsList: any[] = [
     { id: '1', lat: 28.6304, lng: 77.2177, fillLevel: 85, predictedFillLevel: 85, hasReport: false, reportDetails: null, zone: 'Connaught Place', lastUpdated: '2m ago', isPriority: true, isManualPriority: false, baseFillRate: 1.5, type: 'commercial' },
@@ -89,7 +95,8 @@ async function startServer() {
   ];
 
   function updateFleetMovement() {
-    fleetDrivers.forEach(driver => {
+    try {
+      fleetDrivers.forEach(driver => {
       // Append current location to history
       if (!driver.history) driver.history = [];
       driver.history.push([driver.lat, driver.lng]);
@@ -174,6 +181,9 @@ async function startServer() {
          driver.speed = 0;
       }
     });
+  } catch (e) {
+      console.error("Movement simulation error:", e);
+    }
   }
 
   app.post("/api/dispatch", (req, res) => {
@@ -428,13 +438,15 @@ async function startServer() {
       
       // Update local mock DB for immediate feedback in simulation
       const bin = binsList.find(b => b.id === reportData.binId);
-      if (bin) {
+      if (bin && !reportData.markedFake) {
         bin.hasReport = true;
         bin.reportDetails = reportData;
         bin.needsCollection = true;
         bin.isManualPriority = true;
         bin.predictedFillLevel = 100;
-        console.log(`Report received for Bin #${bin.id}. Triggering auto-dispatch.`);
+        console.log(`Valid report received for Bin #${bin.id}. Triggering auto-dispatch.`);
+      } else if (bin && reportData.markedFake) {
+        console.log(`Fake report received for Bin #${bin.id}. Bin status NOT updated.`);
       }
 
       // Trigger Auto-Dispatch if not flagged fake
@@ -608,18 +620,36 @@ async function startServer() {
     try {
       const response = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordString}?source=first&destination=last&roundtrip=true&overview=full&geometries=geojson&steps=true`);
       if (!response.ok) {
-        throw new Error("Trip service failed");
+        throw new Error(`Trip service failed with status: ${response.status}`);
       }
       const data = await response.json();
-      res.json({ ...data, provider: "osrm" });
+      return res.json({ ...data, provider: "osrm" });
     } catch (e) {
+      console.warn("OSRM Trip failed, trying fallback route:", e);
       try {
         const fallRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson&steps=true`);
-        if (!fallRes.ok) throw new Error("OSRM route failed");
+        if (!fallRes.ok) throw new Error(`OSRM route failed with status: ${fallRes.status}`);
         const fallData = await fallRes.json();
-        res.json({ ...fallData, provider: "osrm" });
+        return res.json({ ...fallData, provider: "osrm" });
       } catch (err) {
-        res.status(500).json({ error: "Routing failed" });
+        console.error("All routing services failed:", err);
+        // Emergency Fallback: Just return the points as a straight line so the app doesn't break
+        const coords = coordString.split(';').map(c => {
+          const [lng, lat] = c.split(',').map(Number);
+          return [lng, lat];
+        });
+        return res.json({
+          provider: "fallback",
+          routes: [{
+            geometry: {
+              type: "LineString",
+              coordinates: coords
+            },
+            distance: 0,
+            duration: 0,
+            legs: []
+          }]
+        });
       }
     }
   });
